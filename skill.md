@@ -11,6 +11,7 @@
 3. **排版转换**：调用 `convert_markdown_to_wechat_html` 技能，将核查无误的 Markdown 文本转换为微信公众号支持的内联样式 HTML 格式。
 4. **封面图绘制与匹配**：在准备推送前，**根据公众号文章的核心内容，自行绘制或生成合适的封面图**，并确保在推送时匹配使用（通常需要先上传为微信素材获取 `thumb_media_id`）。
 5. **发布/存草稿**：调用 `wechat_manage_capability` 技能，将生成的 HTML 内容及匹配的封面图保存到公众号草稿箱 (`draft`) 或直接提交发布 (`publish`)。
+6. **定时推文 (Scheduled Publishing)**：可以结合 `cron_job` 心跳机制实现定时自动化推文任务。
 
 ---
 

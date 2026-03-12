@@ -1,123 +1,62 @@
-# 微信公众号 AI 助手技能 (WeChat Official Account AI Skills)
+# OpenClaw 微信公众号技能使用指南 (Skill Instructions for OpenClaw)
 
-本项目包含一系列为大模型（如基于 OpenClaw 的 AI 助手）设计的微信公众号管理与排版技能（Skills）。旨在帮助 AI 助手无缝对接微信公众号的各项能力，实现自动化排版、内容发布、用户管理、数据统计等全方位功能。
+这份文档是专门写给 OpenClaw (AI 助手) 的操作指南。当你需要协助用户运营、管理微信公众号或进行文章排版时，请严格参考以下技能说明和工作流。
 
-## 包含的技能模块
+## 🌟 核心工作流 (Standard Workflow)
 
-### 1. 微信公众号排版转换器 (`wechat_formatter_skill.py`)
+当你接到类似“帮我写一篇关于XXX的文章并发布到公众号”的端到端任务时，请遵循以下标准工作流：
 
-将标准的 Markdown 文本一键转换为微信公众号兼容的精美 HTML 格式。
+1. **内容创作**：根据用户需求，生成高质量的 Markdown 格式文章初稿。
+2. **事实核查 (按需触发)**：**自行判断**生成的内容是否包含需要验证的关键数据、事实或时效性新闻。如果需要，主动调用 `tavily_search` 技能进行联网检索验证，并据此修正 Markdown 内容，防止 AI 幻觉。
+3. **排版转换**：调用 `convert_markdown_to_wechat_html` 技能，将核查无误的 Markdown 文本转换为微信公众号支持的内联样式 HTML 格式。
+4. **封面图绘制与匹配**：在准备推送前，**根据公众号文章的核心内容，自行绘制或生成合适的封面图**，并确保在推送时匹配使用（通常需要先上传为微信素材获取 `thumb_media_id`）。
+5. **发布/存草稿**：调用 `wechat_manage_capability` 技能，将生成的 HTML 内容及匹配的封面图保存到公众号草稿箱 (`draft`) 或直接提交发布 (`publish`)。
+6. **定时推文 (Scheduled Publishing)**：可以结合 `cron_job` 心跳机制实现定时自动化推文任务。
 
-**核心特性：**
-- **多主题支持**：内置多种排版主题（如“默认”、“文颜”、“马卡龙”等），支持通过 YAML 文件自定义主题样式。
-- **全元素覆盖**：支持标题、粗体、斜体、代码块、行内代码、列表、引用块、表格、分割线等 Markdown 元素的深度定制与美化。
-- **微信兼容性**：自动将 CSS 样式内联，确保在微信公众号图文消息中的完美呈现。
+---
 
-**接口调用示例：**
-```python
-from skills.wechat_formatter_skill import convert_markdown_to_wechat_html
+## 🛠️ 技能列表与使用说明
 
-html_content = convert_markdown_to_wechat_html(
-    markdown_content="## 欢迎关注\n这是一篇测试文章。",
-    theme_name="wenyan" # 使用文颜主题
-)
-```
+### 1. 微信排版技能 (WeChat Formatter)
+**函数入口**: `convert_markdown_to_wechat_html(markdown_content, theme_name="default", themes_dir="./themes")`
+**所在文件**: `src/skills/wechat_formatter_skill.py`
+**功能**: 将 Markdown 文本转换为带有内联 CSS 样式的 HTML，专为微信公众号图文消息优化，解决了微信编辑器不支持外部样式表的问题。
+**使用场景**: 
+- 用户要求“排版文章”、“美化文章”。
+- 用户需要“预览公众号效果”。
+- 准备将内容通过 API 推送到公众号草稿箱前的数据处理阶段。
+**注意事项**:
+- 确保传入的是标准的 Markdown 字符串。
+- 如果用户指定了特定风格（如文颜、马卡龙），请通过 `theme_name` 参数传入对应的名称。
 
-### 2. 微信公众号能力管理 (`wechat_capability_skill.py`)
+### 2. 微信公众号管理技能 (WeChat Capability Manager)
+**函数入口**: `wechat_manage_capability(app_id, app_secret, capability, action, **kwargs)`
+**所在文件**: `src/skills/wechat_capability_skill.py`
+**功能**: 统一调用微信公众号的各项官方 API。该技能已内置了 Access Token 的自动获取、缓存和过期重试机制，你不需要手动处理 Token。
+**使用场景**: 用户要求“更新底部菜单”、“查看草稿箱”、“群发消息”、“查看粉丝数据”、“管理留言”等。
 
-微信公众号各项核心能力管理的统一 API 接口，参考微信官方《公众号开发指南》实现。
+**支持的 Capability 与 Action 映射表**:
+- `menu` (自定义菜单): `create`, `get`, `delete`
+- `draft` (草稿箱): `add`, `get`, `delete`, `update`, `count`, `batchget`
+- `publish` (发布能力): `submit`, `get_status`, `delete`, `get_article`, `batchget`
+- `material` (永久素材): `get`, `delete`, `count`, `batchget`
+- `user` (用户管理): `get_list`, `get_info`, `update_remark`
+- `comment` (留言管理): `open`, `close`, `list`, `markelect`, `unmarkelect`, `delete`, `reply`, `delete_reply`
+- `message` (消息与群发): `send_custom`, `send_mass`
+- `kf` (客服管理): `add`, `get_list`
+- `analysis` (数据统计): `get_article_summary`, `get_user_summary`
 
-**核心特性：**
-- **自动 Token 管理**：内置 `access_token` 的自动获取、缓存与过期重试机制，无需手动维护。
-- **九大能力模块支持**：
-  1. **自定义菜单 (`menu`)**：创建、查询、删除菜单。
-  2. **草稿箱管理 (`draft`)**：新建、获取、删除、修改草稿及批量获取。
-  3. **发布能力 (`publish`)**：提交发布、轮询状态、删除发布、获取已发布文章。
-  4. **素材管理 (`material`)**：获取、删除永久素材及批量获取。
-  5. **用户管理 (`user`)**：获取用户列表、基本信息及设置备注名。
-  6. **留言管理 (`comment`)**：打开/关闭留言、查看列表、精选/取消精选、回复及删除。
-  7. **基础消息与群发 (`message`)**：发送客服消息及根据标签群发。
-  8. **客服管理 (`kf`)**：添加客服账号及获取客服列表。
-  9. **数据统计 (`analysis`)**：获取图文群发每日数据及用户增减数据。
+**调用示例**:
+- **保存草稿**: `wechat_manage_capability(app_id="...", app_secret="...", capability="draft", action="add", articles=[{"title": "标题", "content": "<html>...", "thumb_media_id": "..."}])`
+- **获取用户列表**: `wechat_manage_capability(app_id="...", app_secret="...", capability="user", action="get_list", next_openid="")`
 
-**接口调用示例：**
-```python
-from skills.wechat_capability_skill import wechat_manage_capability
+---
 
-APP_ID = "YOUR_APP_ID"
-APP_SECRET = "YOUR_APP_SECRET"
+## ⚠️ 交互准则 (Interaction Guidelines)
 
-# 示例 1：获取草稿箱列表
-drafts = wechat_manage_capability(
-    app_id=APP_ID, 
-    app_secret=APP_SECRET, 
-    capability="draft", 
-    action="batchget", 
-    offset=0, 
-    count=10
-)
-
-# 示例 2：创建自定义菜单
-menu_response = wechat_manage_capability(
-    app_id=APP_ID, 
-    app_secret=APP_SECRET, 
-    capability="menu", 
-    action="create", 
-    menu_data={
-        "button": [
-            {"type": "click", "name": "今日歌曲", "key": "V1001_TODAY_MUSIC"}
-        ]
-    }
-)
-```
-
-## 进阶功能：AI 内容搜索验证 (推荐)
-
-在将 AI 生成的 Markdown 内容转换为微信公众号图文并发布之前，强烈建议对内容中的事实、数据和时效性信息进行搜索验证，以避免 AI 幻觉导致发布错误信息。
-
-**如何实现？**
-推荐安装并结合使用 **Tavily Search** 技能（`tavily_search_skill`）来进行自动化事实核查。
-
-**推荐工作流：**
-1. **内容生成**：AI 助手生成初始 Markdown 文章。
-2. **事实核查 (Tavily Search)**：提取文章中的关键事实、数据或新闻，调用 Tavily Search 技能进行联网检索对比，修正 Markdown 内容。
-3. **排版转换**：调用 `wechat_formatter_skill` 将核查后的 Markdown 转换为微信 HTML。
-4. **一键发布**：调用 `wechat_capability_skill` 将 HTML 保存至草稿箱或直接发布。
-
-**Tavily Search 技能安装引导：**
-请确保您的 OpenClaw 环境中已安装 Tavily 搜索技能。通常可以通过配置 Tavily API Key 并引入相应的 search skill 来实现：
-
-```python
-# 概念示例：结合 Tavily 搜索进行验证
-from skills.tavily_search_skill import tavily_search
-
-# 1. 验证文章中的某个事实
-search_result = tavily_search(query="2024年微信公众号活跃用户数")
-
-# 2. 根据搜索结果修正 markdown_content 后再进行转换...
-```
-
-## 目录结构
-
-```text
-/src/skills/
-├── wechat_formatter_skill.py   # Markdown 转微信 HTML 排版技能
-└── wechat_capability_skill.py  # 微信公众号能力管理统一接口
-```
-
-## 依赖说明
-
-- `requests`: 用于发送 HTTP 请求调用微信 API。
-- `PyYAML`: 用于解析排版主题的 YAML 配置文件。
-
-## 保持同步更新
-
-本项目会持续优化排版效果、增加新的微信 API 支持并修复潜在问题。为了确保您使用的是最新、最稳定的版本，强烈建议您**定期拉取（Pull）**项目代码以保持同步更新：
-
-```bash
-# 进入项目目录
-cd your-project-directory
-
-# 拉取最新代码
-git pull origin main
-```
+1. **凭证安全**：调用 `wechat_manage_capability` 必须提供 `app_id` 和 `app_secret`。如果当前对话上下文中没有这两个信息，**必须先向用户询问**，切勿自行编造或使用占位符发起真实请求。
+2. **错误处理**：如果 API 调用返回错误（例如 `errcode != 0`），请解析错误信息，并用人类易懂的语言向用户解释原因（如：AppSecret 错误、IP 未在白名单、接口调用频次超限等），并提供修复建议。
+3. **确认机制**：在执行破坏性操作（如删除菜单、删除已发布文章）或正式发布操作（`publish` -> `submit`）前，建议先向用户进行二次确认。
+4. **所见即所得**：在完成 Markdown 到 HTML 的排版转换后，可以向用户展示部分 HTML 代码或告知转换已成功，等待用户确认后再执行推送到草稿箱的操作。
+5. **主动修复**：如果在使用技能或执行任务过程中出现 Bug 或异常问题，请主动尝试分析报错原因，并在**征得用户同意后**再进行代码修复或配置更改。
+6. **插拔式设计**：本项目的技能（Skill）功能支持插拔式架构。当需要增加新功能或合并某个 Skill 时，可以做到即插即用；同样，不需要的 Skill 也可以随时拔除，请在扩展或精简功能时遵循此原则。
