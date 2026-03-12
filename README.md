@@ -71,6 +71,32 @@ menu_response = wechat_manage_capability(
 )
 ```
 
+## 进阶功能：AI 内容搜索验证 (推荐)
+
+在将 AI 生成的 Markdown 内容转换为微信公众号图文并发布之前，强烈建议对内容中的事实、数据和时效性信息进行搜索验证，以避免 AI 幻觉导致发布错误信息。
+
+**如何实现？**
+推荐安装并结合使用 **Tavily Search** 技能（`tavily_search_skill`）来进行自动化事实核查。
+
+**推荐工作流：**
+1. **内容生成**：AI 助手生成初始 Markdown 文章。
+2. **事实核查 (Tavily Search)**：提取文章中的关键事实、数据或新闻，调用 Tavily Search 技能进行联网检索对比，修正 Markdown 内容。
+3. **排版转换**：调用 `wechat_formatter_skill` 将核查后的 Markdown 转换为微信 HTML。
+4. **一键发布**：调用 `wechat_capability_skill` 将 HTML 保存至草稿箱或直接发布。
+
+**Tavily Search 技能安装引导：**
+请确保您的 OpenClaw 环境中已安装 Tavily 搜索技能。通常可以通过配置 Tavily API Key 并引入相应的 search skill 来实现：
+
+```python
+# 概念示例：结合 Tavily 搜索进行验证
+from skills.tavily_search_skill import tavily_search
+
+# 1. 验证文章中的某个事实
+search_result = tavily_search(query="2024年微信公众号活跃用户数")
+
+# 2. 根据搜索结果修正 markdown_content 后再进行转换...
+```
+
 ## 目录结构
 
 ```text
