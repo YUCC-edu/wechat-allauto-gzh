@@ -174,7 +174,7 @@ export default function App() {
           {categories.map(category => (
             <div key={category}>
               <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 px-2">
-                {category === 'wenyan' ? '文颜主题' : '马卡龙主题'}
+                {category === 'wenyan' ? '文颜主题' : category === 'macaron' ? '马卡龙主题' : category === 'shuimo' ? '水墨主题' : category}
               </h2>
               <div className="space-y-1">
                 {themes.filter(t => t.category === category).map(theme => (

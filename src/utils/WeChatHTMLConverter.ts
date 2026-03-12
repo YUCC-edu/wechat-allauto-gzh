@@ -76,6 +76,7 @@ export class WeChatHTMLConverter {
     const h6Style = this.styleToStr(this.theme.h6);
 
     const isWenyan = this.theme.category === 'wenyan';
+    const isShuimo = this.theme.category === 'shuimo';
     const primaryColor = this.theme.colors?.primary || '#ec4899';
     
     let result = text;
@@ -86,6 +87,9 @@ export class WeChatHTMLConverter {
       // Elegant Wenyan style for H2: bottom border, letter spacing, primary color
       const h2Style = `display: inline-block; font-size: 22px; font-weight: bold; color: ${primaryColor}; border-bottom: 2px solid ${primaryColor}; padding-bottom: 6px; letter-spacing: 2px;`;
       result = result.replace(/^## (.+)$/gm, (m, p1) => `<section style="margin-top: 32px; margin-bottom: 16px; text-align: ${textAlign};"><h2 style="${h2Style}">${this.escapeHtml(p1)}</h2></section>`);
+    } else if (isShuimo) {
+      const h2Style = this.styleToStr(this.theme.h2);
+      result = result.replace(/^## (.+)$/gm, (m, p1) => `<h2 style="${h2Style}">${this.escapeHtml(p1)}</h2>`);
     } else {
       // H2 Custom Style: Rounded color block
       const h2ThemeStyle = this.theme.h2 || {};
@@ -308,6 +312,9 @@ export class WeChatHTMLConverter {
             for (const header of headers) {
               if (this.theme.category === 'wenyan') {
                 htmlList.push(`<th style="padding: 10px 14px; border: 1px solid ${primaryColor}; background-color: ${primaryColor}; color: #ffffff; font-weight: bold; text-align: center;">${this.escapeHtml(header)}</th>`);
+              } else if (this.theme.table_th) {
+                const thStyle = this.styleToStr(this.theme.table_th);
+                htmlList.push(`<th style="${thStyle}">${this.escapeHtml(header)}</th>`);
               } else {
                 htmlList.push(`<th style="padding: 8px 12px; border: 1px solid #e2e8f0; background-color: ${primaryColor}15; color: ${primaryColor}; font-weight: bold;">${this.escapeHtml(header)}</th>`);
               }
@@ -321,6 +328,9 @@ export class WeChatHTMLConverter {
               for (const cell of row) {
                 if (this.theme.category === 'wenyan') {
                   htmlList.push(`<td style="padding: 10px 14px; border: 1px solid #e5e7eb; color: #374151; text-align: center;">${this.escapeHtml(cell)}</td>`);
+                } else if (this.theme.table_td) {
+                  const tdStyle = this.styleToStr(this.theme.table_td);
+                  htmlList.push(`<td style="${tdStyle}">${this.escapeHtml(cell)}</td>`);
                 } else {
                   htmlList.push(`<td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${this.escapeHtml(cell)}</td>`);
                 }
