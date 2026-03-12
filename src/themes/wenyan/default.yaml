@@ -1,0 +1,133 @@
+# ============================================================
+# 文颜默认主题 (Wenyan Default)
+# ============================================================
+# 特点：简洁经典的黑白灰配色，蓝色点缀，适合长文阅读
+# 适用：通用、长文、技术文章、博客、公众号
+# 风格：简洁、经典、专业、优雅
+# 来源：文颜(Wenyan)内置主题移植
+# ============================================================
+
+name: 文颜默认
+description: 简洁经典的黑白灰配色，蓝色点缀，适合长文阅读，文颜项目默认主题
+keywords:
+  - 默认
+  - 经典
+  - 简洁
+  - 专业
+  - 长文
+  - 博客
+  - 技术
+  - 公众号
+  - 黑白灰
+  - 蓝色
+
+colors:
+  primary: "#2563eb"      # 主色调：经典蓝
+  accent: "#dbeafe"       # 强调色：浅蓝背景
+  text: "#1f2937"         # 主文字：深灰
+  text_light: "#6b7280"   # 次要文字：中灰
+  background: "#ffffff"   # 背景色：纯白
+  blockquote_bg: "#f8fafc" # 引用块背景：极浅灰蓝
+  code_bg: "#f1f5f9"      # 代码背景：浅灰
+  table_border: "#e2e8f0" # 表格边框：浅灰蓝
+  table_header_bg: "#f1f5f9" # 表头背景：浅灰
+
+styles:
+  body:
+    font_size: "16px"
+    line_height: "1.75"
+    letter_spacing: "0px"
+    padding: "0 16px"
+    margin: "0 0 10px 0"
+    color: "#1f2937"
+    background_color: "#ffffff"
+  h1:
+    font_size: "24px"
+    font_weight: "normal"
+    margin: "0 0 8px 0"
+    padding: "0 16px"
+    text_align: "center"
+    color: "#1f2937"
+  h2:
+    font_size: "20.8px"
+    font_weight: "bold"
+    margin: "0 0 6px 0"
+    padding: "0 16px"
+    color: "#1f2937"
+  h3:
+    font_size: "20.8px"
+    font_weight: "bold"
+    margin: "0 0 4px 0"
+    padding: "0 16px"
+    color: "#1f2937"
+  h4:
+    font_size: "19.2px"
+    font_weight: "bold"
+    margin: "0 0 4px 0"
+    padding: "0 16px"
+    color: "#6b7280"
+  blockquote:
+    font_size: "14.4px"
+    padding: "8px 10px"
+    margin: "16px 0"
+    border_left: "4px solid #2563eb"
+    background: "#f8fafc"
+    border_radius: "0 5px 5px 0"
+    line_height: "1.75"
+    color: "#374151"
+  code_inline:
+    font_size: "12.5px"
+    padding: "4px 6px"
+    border_radius: "3px"
+    background: "#f1f5f9"
+    color: "#2563eb"
+  code_block:
+    font_size: "14px"
+    line_height: "2"
+    margin: "10px 4px"
+    padding: "8px"
+    border_radius: "5px"
+    background: "#f8fafc"
+    color: "#1f2937"
+  list:
+    font_size: "16px"
+    margin: "10px 0"
+    padding: "0 16px 0 32px"
+    line_height: "1.75"
+    color: "#1f2937"
+  separator:
+    border_top: "1px solid #ddd"
+    margin: "20px auto"
+  image:
+    border_radius: "8px"
+    box_shadow: "0 2px 8px rgba(0, 0, 0, 0.08)"
+  link:
+    color: "#2563eb"
+    text_decoration: "underline"
+  strong:
+    font_weight: "bold"
+    color: "#1f2937"
+  table:
+    font_size: "12px"
+    border_collapse: "collapse"
+    width: "100%"
+    margin: "10px 0"
+  table_th:
+    padding: "9px 12px"
+    line_height: "22px"
+    font_weight: "bold"
+    background: "#f1f5f9"
+    color: "#1f2937"
+    border: "1px solid #e2e8f0"
+  table_td:
+    padding: "9px 12px"
+    line_height: "22px"
+    color: "#374151"
+    border: "1px solid #e2e8f0"
+  module_title:
+    font_size: "20.8px"
+    font_weight: "bold"
+    color: "#2563eb"
+    margin: "0 0 6px 0"
+    padding: "0 16px"
+    text_align: "center"
