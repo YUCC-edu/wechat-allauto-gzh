@@ -14,23 +14,34 @@ class ThemeLoader:
         if theme_name in cls._cache:
             return cls._cache[theme_name]
             
-        theme_file = Path(themes_dir) / f"{theme_name}.yaml"
-        if not theme_file.exists():
-            # 提供一个内置的默认主题作为 fallback
-            return {
-                "name": "默认主题",
-                "colors": {"primary": "#ec4899"},
-                "body": {"font_size": "15px", "color": "#3f3f46", "line_height": "1.75"},
-                "h1": {"font_size": "22px", "font_weight": "bold", "text_align": "center", "margin": "20px 0"},
-                "h2": {"font_size": "18px", "text_align": "left"},
-                "h3": {"font_size": "16px", "font_weight": "bold", "margin": "16px 0"},
-                "strong": {"font_weight": "bold", "color": "#ec4899"},
-                "code_block": {"background_color": "#f4f4f5", "padding": "16px", "border_radius": "8px"},
-                "code_inline": {"background_color": "#f4f4f5", "color": "#ec4899", "padding": "2px 4px", "border_radius": "4px"},
-                "link": {"color": "#ec4899", "text_decoration": "none"},
-                "blockquote": {"border_left": "4px solid #ec4899", "padding_left": "12px", "color": "#71717a", "background_color": "#fdf2f8", "padding": "12px", "border_radius": "4px"}
-            }
+        themes_dir_path = Path(themes_dir)
+        if not themes_dir_path.exists():
+            # 如果传入的 themes_dir 不存在，尝试使用相对于当前文件的路径
+            themes_dir_path = Path(__file__).parent.parent / "themes"
             
+        theme_file = themes_dir_path / f"{theme_name}.yaml"
+        if not theme_file.exists():
+            # 尝试检查是否是一个目录，如果是，则加载该目录下的 default.yaml
+            dir_theme_file = themes_dir_path / theme_name / "default.yaml"
+            if dir_theme_file.exists():
+                theme_file = dir_theme_file
+            else:
+                print(f"Warning: Theme '{theme_name}' not found. Falling back to default theme.")
+                # 提供一个内置的默认主题作为 fallback
+                return {
+                    "name": "默认主题",
+                    "colors": {"primary": "#ec4899"},
+                    "body": {"font_size": "15px", "color": "#3f3f46", "line_height": "1.75"},
+                    "h1": {"font_size": "22px", "font_weight": "bold", "text_align": "center", "margin": "20px 0"},
+                    "h2": {"font_size": "18px", "text_align": "left"},
+                    "h3": {"font_size": "16px", "font_weight": "bold", "margin": "16px 0"},
+                    "strong": {"font_weight": "bold", "color": "#ec4899"},
+                    "code_block": {"background_color": "#f4f4f5", "padding": "16px", "border_radius": "8px"},
+                    "code_inline": {"background_color": "#f4f4f5", "color": "#ec4899", "padding": "2px 4px", "border_radius": "4px"},
+                    "link": {"color": "#ec4899", "text_decoration": "none"},
+                    "blockquote": {"border_left": "4px solid #ec4899", "padding_left": "12px", "color": "#71717a", "background_color": "#fdf2f8", "padding": "12px", "border_radius": "4px"}
+                }
+                
         with open(theme_file, 'r', encoding='utf-8') as f:
             theme_data = yaml.safe_load(f)
             
