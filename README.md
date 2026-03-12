@@ -109,3 +109,15 @@ search_result = tavily_search(query="2024年微信公众号活跃用户数")
 
 - `requests`: 用于发送 HTTP 请求调用微信 API。
 - `PyYAML`: 用于解析排版主题的 YAML 配置文件。
+
+## 保持同步更新
+
+本项目会持续优化排版效果、增加新的微信 API 支持并修复潜在问题。为了确保您使用的是最新、最稳定的版本，强烈建议您**定期拉取（Pull）**项目代码以保持同步更新：
+
+```bash
+# 进入项目目录
+cd your-project-directory
+
+# 拉取最新代码
+git pull origin main
+```
