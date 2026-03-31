@@ -228,6 +228,86 @@ cache_info = ThemeLoader.get_cache_info()
 
 ---
 
+## 5. Markdown 转 HTML 转换器
+
+**文件**: `src/skills/markdown_to_wechat_converter.py`
+
+### 类和方法
+```python
+from src.skills.markdown_to_wechat_converter import MarkdownToWeChatConverter
+
+# 创建转换器（可选指定主题）
+converter = MarkdownToWeChatConverter(theme=theme_config)
+
+# 转换 Markdown 为微信兼容 HTML
+html = converter.convert(markdown_text)
+
+# 或者使用便捷函数
+from src.skills.markdown_to_wechat_converter import convert_markdown_to_wechat_html
+html = convert_markdown_to_wechat_html(markdown_text, theme_name="macaron/blue")
+```
+
+### 支持的 Markdown 语法
+- 标题 (# - ######)
+- 粗体 (**text**)、斜体 (*text*)
+- 行内代码 (`code`)
+- 链接 [text](url)、图片 ![alt](url)
+- 无序列表 (- item)、有序列表 (1. item)
+- 引用 (> quote)
+- 表格 (| col1 | col2 |)
+- 分割线 (---)
+- 代码块 (```)
+
+### 高级排版组件
+
+转换器支持 6 种自定义容器组件：
+
+```markdown
+::: release [主标题] [副标题]
+内容区域
+:::
+
+::: grid
+第一项
+---
+第二项
+:::
+
+::: timeline
+2024-01 时间点1
+描述内容
+---
+2024-02 时间点2
+描述内容
+:::
+
+::: steps
+步骤1标题 步骤1描述
+---
+步骤2标题 步骤2描述
+:::
+
+::: compare
+左侧内容（绿色正确）
+---
+右侧内容（红色错误）
+:::
+
+::: focus
+金句内容
+:::
+```
+
+### 主题色对比自动计算
+
+转换器使用 YIQ 亮度公式自动计算文字颜色：
+- 亮度 > 128 → 黑色文字
+- 亮度 ≤ 128 → 白色文字
+
+这确保在浅色或深色主题上文字都有良好的可读性。
+
+---
+
 ## ⚠️ 使用注意事项
 
 ### 1. 凭证安全
