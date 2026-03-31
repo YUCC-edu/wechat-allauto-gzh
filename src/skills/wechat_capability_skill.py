@@ -2,8 +2,17 @@ import requests
 import json
 import time
 import random
+import re
+import os
 from typing import Dict, List, Optional, Any, Union
 from functools import wraps
+
+# 可选的 HTML 解析库
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
 
 # 导入 OpenClaw 兼容模块
 try:
@@ -24,6 +33,219 @@ except ImportError:
     except ImportError:
         convert_markdown_to_wechat_html = None
         is_markdown = None
+
+# ==========================================
+# 微信文章内容验证与清理工具函数
+# ==========================================
+
+# 微信支持的 HTML 标签白名单
+ALLOWED_TAGS = {
+    'p', 'br', 'span', 'a', 'img',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'strong', 'b', 'em', 'i', 'u',
+    'ul', 'ol', 'li',
+    'blockquote',
+    'pre', 'code',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    'section', 'div',
+    'mp-common-miniprogram',  # 微信小程序卡片
+}
+
+# 需要移除的危险标签和属性
+FORBIDDEN_TAGS = {'script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select', 'button', 'canvas', 'svg', 'video', 'audio'}
+FORBIDDEN_ATTRS = {'onerror', 'onclick', 'onload', 'onmouseover', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'javascript:', 'vbscript:', 'data:'}
+
+# 微信图文消息限制
+MAX_CONTENT_LENGTH = 20000  # 2万字符
+MAX_CONTENT_SIZE = 1024 * 1024  # 1MB
+
+
+def sanitize_html_for_wechat(html_content: str) -> str:
+    """
+    清理 HTML 内容，移除微信不支持的标签和属性
+    
+    Args:
+        html_content: 原始 HTML 内容
+        
+    Returns:
+        清理后的 HTML 内容
+    """
+    from bs4 import BeautifulSoup
+    
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # 移除危险标签
+        for tag in soup.find_all(FORBIDDEN_TAGS):
+            tag.decompose()
+        
+        # 移除危险属性
+        for tag in soup.find_all(True):
+            attrs = list(tag.attrs.keys())
+            for attr in attrs:
+                # 检查属性名是否危险
+                attr_lower = attr.lower()
+                if any(dangerous in attr_lower for dangerous in FORBIDDEN_ATTRS):
+                    del tag[attr]
+                # 检查属性值是否危险
+                attr_value = str(tag.get(attr, '')).lower()
+                if any(dangerous in attr_value for dangerous in FORBIDDEN_ATTRS):
+                    del tag[attr]
+        
+        # 移除空的 style 属性
+        for tag in soup.find_all(True):
+            if tag.get('style') and not tag['style'].strip():
+                del tag['style']
+        
+        return str(soup)
+    except Exception:
+        # 如果解析失败，做简单的正则清理
+        result = html_content
+        for tag in FORBIDDEN_TAGS:
+            result = re.sub(f'<{tag}[^>]*>.*?</{tag}>', '', result, flags=re.DOTALL | re.IGNORECASE)
+            result = re.sub(f'<{tag}[^>]*/?>', '', result, flags=re.IGNORECASE)
+        return result
+
+
+def validate_article_content(content: str) -> dict:
+    """
+    验证图文消息内容是否符合微信限制
+    
+    Args:
+        content: HTML 内容
+        
+    Returns:
+        验证结果字典:
+        - valid: bool, 是否有效
+        - char_count: int, 字符数
+        - byte_size: int, 字节大小
+        - warnings: list, 警告信息
+        - errors: list, 错误信息
+    """
+    warnings = []
+    errors = []
+    
+    # 统计字符数（不含 HTML 标签）
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(content, 'html.parser')
+        text_content = soup.get_text()
+    except Exception:
+        # 如果解析失败，简单去除标签
+        text_content = re.sub(r'<[^>]+>', '', content)
+    
+    char_count = len(text_content)
+    byte_size = len(content.encode('utf-8'))
+    
+    # 检查字符数
+    if char_count > MAX_CONTENT_LENGTH:
+        errors.append(f"内容字符数超限: {char_count} > {MAX_CONTENT_LENGTH}")
+    elif char_count > MAX_CONTENT_LENGTH * 0.9:
+        warnings.append(f"内容字符数接近上限: {char_count}/{MAX_CONTENT_LENGTH}")
+    
+    # 检查大小
+    if byte_size > MAX_CONTENT_SIZE:
+        errors.append(f"内容大小超限: {byte_size} > {MAX_CONTENT_SIZE}")
+    
+    # 检查是否有本地图片路径
+    local_image_pattern = r'src=["\']?(?!https?://)(?!data:)(?!/)["\'  ]*(\.jpg|\.jpeg|\.png|\.gif|\.webp)'
+    if re.search(local_image_pattern, content, re.IGNORECASE):
+        warnings.append("发现本地图片路径，上传前需要替换为微信素材 URL")
+    
+    # 检查是否有外部图片（非微信域名）
+    external_image_pattern = r'src=["\'](https?://(?!mmbiz\.qpic\.cn)[^"\']+)["\']'
+    external_matches = re.findall(external_image_pattern, content)
+    if external_matches:
+        warnings.append(f"发现 {len(external_matches)} 个外部图片 URL，会被微信过滤，需要先上传到微信素材库")
+    
+    return {
+        "valid": len(errors) == 0,
+        "char_count": char_count,
+        "byte_size": byte_size,
+        "warnings": warnings,
+        "errors": errors,
+        "max_chars": MAX_CONTENT_LENGTH,
+        "max_size": MAX_CONTENT_SIZE
+    }
+
+
+def replace_image_urls_with_wechat(
+    html_content: str,
+    image_uploader,  # WeChatCapabilityManager 实例
+    upload_local: bool = True
+) -> dict:
+    """
+    替换 HTML 中的图片 URL 为微信素材 URL
+    
+    Args:
+        html_content: HTML 内容
+        image_uploader: WeChatCapabilityManager 实例，用于上传图片
+        upload_local: 是否上传本地图片，默认 True
+        
+    Returns:
+        dict: {
+            "html": 替换后的 HTML,
+            "replaced": list, 替换记录 [{"original": ..., "new": ..., "success": bool}],
+            "errors": list, 错误信息
+        }
+    """
+    from bs4 import BeautifulSoup
+    
+    replaced = []
+    errors = []
+    
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+    except Exception as e:
+        return {
+            "html": html_content,
+            "replaced": [],
+            "errors": [f"HTML 解析失败: {str(e)}"]
+        }
+    
+    for img in soup.find_all('img'):
+        original_url = img.get('src', '')
+        if not original_url:
+            continue
+        
+        # 跳过已经是微信图片的 URL
+        if 'mmbiz.qpic.cn' in original_url:
+            continue
+        
+        # 跳过 data URI
+        if original_url.startswith('data:'):
+            continue
+        
+        # 跳过空 URL
+        if not original_url.strip():
+            continue
+        
+        # 上传图片
+        upload_result = image_uploader.upload_article_image(original_url)
+        
+        if upload_result.get('errcode') == 0 or 'url' in upload_result:
+            new_url = upload_result.get('url', '')
+            img['src'] = new_url
+            replaced.append({
+                "original": original_url,
+                "new": new_url,
+                "success": True
+            })
+        else:
+            errors.append(f"上传图片失败 [{original_url}]: {upload_result.get('errmsg', '未知错误')}")
+            replaced.append({
+                "original": original_url,
+                "new": original_url,
+                "success": False,
+                "error": upload_result.get('errmsg', '未知错误')
+            })
+    
+    return {
+        "html": str(soup),
+        "replaced": replaced,
+        "errors": errors
+    }
+
 
 # ==========================================
 # 自定义异常类（继承自 OpenClaw 基类）
@@ -501,6 +723,111 @@ class WeChatCapabilityManager:
             "count": count
         }
         return self._request('POST', '/cgi-bin/material/batchget_material', data=data)
+    
+    # ==========================================
+    # 4.5 图文消息内的图片上传 (Image Upload for Article Content)
+    # ==========================================
+    def upload_article_image(self, image_path: str) -> dict:
+        """
+        上传图文消息内的图片获取 URL
+        
+        重要：微信要求文章内容中的图片必须通过此接口上传，
+        外部图片 URL 会被微信过滤导致显示异常。
+        
+        Args:
+            image_path: 图片文件路径（本地路径或 URL）
+            
+        Returns:
+            dict: 包含 url 字段，如 {"url": "https://mmbiz.qpic.cn/..."}
+        """
+        import os
+        import re
+        
+        # 检查是否是 URL
+        if re.match(r'^https?://', image_path):
+            # 是 URL，检查是否是微信域名
+            if 'mmbiz.qpic.cn' in image_path:
+                # 已经是微信图片，直接返回
+                return {"url": image_path, "media_id": None}
+            else:
+                # 外部 URL，需要下载后上传
+                try:
+                    import requests as req
+                    response = req.get(image_path, timeout=10)
+                    if response.status_code == 200:
+                        # 创建临时文件
+                        import tempfile
+                        suffix = os.path.splitext(image_path)[1] or '.jpg'
+                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                            f.write(response.content)
+                            temp_path = f.name
+                        try:
+                            return self._upload_local_image(temp_path)
+                        finally:
+                            os.unlink(temp_path)
+                    else:
+                        return {"errcode": -1, "errmsg": f"下载外部图片失败: {response.status_code}"}
+                except Exception as e:
+                    return {"errcode": -1, "errmsg": f"处理外部图片失败: {str(e)}"}
+        else:
+            # 本地文件
+            return self._upload_local_image(image_path)
+    
+    def _upload_local_image(self, image_path: str) -> dict:
+        """上传本地图片到微信素材库"""
+        import os
+        
+        if not os.path.exists(image_path):
+            return {"errcode": -1, "errmsg": f"图片文件不存在: {image_path}"}
+        
+        # 检查文件大小（不超过 2MB）
+        file_size = os.path.getsize(image_path)
+        if file_size > 2 * 1024 * 1024:
+            return {"errcode": -1, "errmsg": f"图片文件过大: {file_size} bytes，最大 2MB"}
+        
+        try:
+            with open(image_path, 'rb') as f:
+                files = {'file': (os.path.basename(image_path), f, 'image/jpeg')}
+                url = f"https://api.weixin.qq.com/cgi-bin/media/upload"
+                params = {'access_token': self.access_token, 'type': 'image'}
+                
+                response = requests.post(url, params=params, files=files, timeout=30)
+                result = response.json()
+                
+                if result.get('errcode') == 0:
+                    # 成功，返回 url
+                    return {
+                        "url": result.get('url', ''),
+                        "media_id": result.get('media_id', '')
+                    }
+                else:
+                    return result
+        except Exception as e:
+            return {"errcode": -1, "errmsg": f"上传图片失败: {str(e)}"}
+    
+    def upload_article_image_from_data(self, image_data: bytes, filename: str = "image.jpg") -> dict:
+        """
+        从二进制数据上传图片
+        
+        Args:
+            image_data: 图片的二进制数据
+            filename: 文件名
+            
+        Returns:
+            dict: 包含 url 字段
+        """
+        try:
+            import tempfile
+            import os
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+                f.write(image_data)
+                temp_path = f.name
+            try:
+                return self._upload_local_image(temp_path)
+            finally:
+                os.unlink(temp_path)
+        except Exception as e:
+            return {"errcode": -1, "errmsg": f"上传图片失败: {str(e)}"}
 
     # ==========================================
     # 5. 用户管理 (User Management)
@@ -621,50 +948,97 @@ class WeChatCapabilityManager:
 # 草稿箱 Markdown 自动转换辅助函数
 # ==========================================
 
-def _process_draft_articles(articles: List[dict], theme_name: str = "default", themes_dir: str = "./themes") -> List[dict]:
+def _process_draft_articles(
+    articles: List[dict],
+    theme_name: str = "default",
+    themes_dir: str = "./themes",
+    auto_upload_images: bool = True,
+    manager = None  # WeChatCapabilityManager instance for image upload
+) -> List[dict]:
     """
-    处理草稿文章列表，自动将 Markdown 内容转换为 HTML
+    处理草稿文章列表，自动将 Markdown 内容转换为 HTML，并验证内容
     
     Args:
         articles: 文章列表，每篇文章包含 title, content 等字段
         theme_name: 主题名称，用于 Markdown 转换
         themes_dir: 主题文件目录
+        auto_upload_images: 是否自动上传图片（默认 True）
+        manager: WeChatCapabilityManager 实例，用于上传图片
         
     Returns:
-        处理后的文章列表，content 字段已转换为 HTML（如果原为 Markdown）
+        处理后的文章列表，包含以下增强字段:
+        - content: HTML 内容（已转换）
+        - _validation: 验证结果
+        - _image_replacement: 图片替换记录
     """
-    if not articles or not convert_markdown_to_wechat_html or not is_markdown:
+    if not articles:
         return articles
     
     processed_articles = []
     
-    for article in articles:
+    for idx, article in enumerate(articles):
         processed_article = article.copy()
         
-        # 检查 content 字段是否存在且为 Markdown 格式
+        # 1. Markdown 转 HTML
         if "content" in processed_article and isinstance(processed_article["content"], str):
             content = processed_article["content"].strip()
             
             # 如果内容是 Markdown 且不是 HTML 标签，则进行转换
-            if is_markdown(content) and not content.startswith("<"):
+            if convert_markdown_to_wechat_html and is_markdown and is_markdown(content) and not content.startswith("<"):
                 try:
-                    # 获取文章指定的主题（优先使用文章内的 theme 字段）
                     article_theme = processed_article.get("theme", theme_name)
-                    
-                    # 转换为 HTML
                     html_content = convert_markdown_to_wechat_html(
                         markdown_content=content,
                         theme_name=article_theme,
                         themes_dir=themes_dir
                     )
-                    
                     processed_article["content"] = html_content
                     processed_article["_converted_from_markdown"] = True
                     processed_article["_theme_used"] = article_theme
-                    
                 except Exception as e:
-                    # 转换失败时保留原始内容
                     processed_article["_conversion_error"] = str(e)
+                    continue
+            
+            # 2. HTML 清理（移除危险标签和属性）
+            if processed_article["content"].startswith("<"):
+                try:
+                    processed_article["content"] = sanitize_html_for_wechat(processed_article["content"])
+                except Exception as e:
+                    processed_article["_sanitization_error"] = str(e)
+            
+            # 3. 内容验证
+            validation_result = validate_article_content(processed_article["content"])
+            processed_article["_validation"] = validation_result
+            
+            if not validation_result["valid"]:
+                processed_article["_validation_errors"] = validation_result["errors"]
+            
+            # 4. 图片 URL 替换（如果提供 manager）
+            if auto_upload_images and manager and '<img' in processed_article["content"]:
+                try:
+                    # 检查是否有需要替换的图片
+                    has_external_images = bool(re.search(
+                        r'src=["\'](https?://(?!mmbiz\.qpic\.cn)[^"\']+)["\']',
+                        processed_article["content"]
+                    ))
+                    has_local_images = bool(re.search(
+                        r'src=["\']?(?!https?://)(?!data:)(?!/)["\'  ]*(\.jpg|\.jpeg|\.png|\.gif|\.webp)',
+                        processed_article["content"],
+                        re.IGNORECASE
+                    ))
+                    
+                    if has_external_images or has_local_images:
+                        replacement_result = replace_image_urls_with_wechat(
+                            processed_article["content"],
+                            manager,
+                            upload_local=True
+                        )
+                        processed_article["content"] = replacement_result["html"]
+                        processed_article["_image_replacement"] = replacement_result["replaced"]
+                        if replacement_result["errors"]:
+                            processed_article["_image_errors"] = replacement_result["errors"]
+                except Exception as e:
+                    processed_article["_image_replacement_error"] = str(e)
         
         processed_articles.append(processed_article)
     
@@ -773,6 +1147,105 @@ def format_markdown_to_wechat_html(markdown_content: str, theme_name: str = "mac
         }
 
 
+@skill_info(
+    name="validate_article_content",
+    description="验证图文消息内容是否符合微信规范，检查字符数、内容大小、图片URL等",
+    version="1.0.0",
+    author="WeChat Skill Team",
+    tags=["wechat", "article", "validation", "验证"],
+    inputs={
+        "content": Input(str, "HTML 内容", required=True, example="<p>文章内容...</p>")
+    },
+    outputs={
+        "result": Input(dict, "验证结果", example={"valid": True, "char_count": 1000})
+    }
+)
+def validate_article_content_skill(content: str) -> dict:
+    """
+    [OpenClaw Skill] 验证图文消息内容是否符合微信规范。
+    
+    检查项目：
+    - 字符数是否超过 2 万限制
+    - 内容大小是否超过 1MB
+    - 是否有外部图片 URL（会被微信过滤）
+    - 是否有本地图片路径（需要先上传）
+    
+    Args:
+        content (str): HTML 内容
+        
+    Returns:
+        dict: 验证结果
+            - valid: bool, 是否有效
+            - char_count: int, 字符数
+            - byte_size: int, 字节大小
+            - warnings: list, 警告信息
+            - errors: list, 错误信息
+            - recommendations: list, 建议
+    """
+    result = validate_article_content(content)
+    
+    # 添加建议
+    recommendations = []
+    
+    if not result["valid"]:
+        recommendations.append("请修复上述错误后再提交")
+    
+    if result["warnings"]:
+        if any("外部图片" in w for w in result["warnings"]):
+            recommendations.append("建议：上传外部图片到微信素材库，或使用本地图片路径后自动上传")
+        if any("接近上限" in w for w in result["warnings"]):
+            recommendations.append("建议：考虑精简内容或拆分为多篇文章")
+    
+    if result["valid"] and not result["warnings"]:
+        recommendations.append("内容验证通过，可以直接提交到草稿箱")
+    
+    result["recommendations"] = recommendations
+    
+    return result
+
+
+@skill_info(
+    name="sanitize_html_for_wechat",
+    description="清理 HTML 内容，移除微信不支持的标签和属性（危险标签、事件属性等）",
+    version="1.0.0",
+    author="WeChat Skill Team",
+    tags=["wechat", "html", "sanitize", "清理"],
+    inputs={
+        "html_content": Input(str, "原始 HTML 内容", required=True)
+    },
+    outputs={
+        "result": Input(dict, "清理结果", example={"success": True, "html": "<p>清理后的内容</p>"})
+    }
+)
+def sanitize_html_skill(html_content: str) -> dict:
+    """
+    [OpenClaw Skill] 清理 HTML 内容，移除微信不支持的标签和属性。
+    
+    移除内容包括：
+    - 危险标签：script, style, iframe, object, embed, form 等
+    - 危险属性：onclick, onerror, javascript: 等
+    
+    Args:
+        html_content (str): 原始 HTML 内容
+        
+    Returns:
+        dict: 清理结果
+    """
+    try:
+        cleaned = sanitize_html_for_wechat(html_content)
+        return {
+            "success": True,
+            "html": cleaned,
+            "message": "HTML 清理完成"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "html": html_content
+        }
+
+
 # ==========================================
 # OpenClaw Skill 接口定义
 # ==========================================
@@ -818,11 +1291,18 @@ def wechat_manage_capability(app_id: str, app_secret: str, capability: str, acti
             
         elif capability == 'draft':
             if action == 'add':
-                # 自动处理 Markdown 内容转换
+                # 自动处理 Markdown 内容转换、HTML 清理和图片上传
                 articles = kwargs.get('articles', [])
                 theme_name = kwargs.get('theme', 'default')
                 themes_dir = kwargs.get('themes_dir', './themes')
-                processed_articles = _process_draft_articles(articles, theme_name, themes_dir)
+                auto_upload_images = kwargs.get('auto_upload_images', True)
+                
+                # 传递 manager 以支持图片自动上传
+                processed_articles = _process_draft_articles(
+                    articles, theme_name, themes_dir,
+                    auto_upload_images=auto_upload_images,
+                    manager=manager if auto_upload_images else None
+                )
                 return manager.add_draft(processed_articles)
             elif action == 'get': return manager.get_draft(kwargs.get('media_id'))
             elif action == 'delete': return manager.delete_draft(kwargs.get('media_id'))
