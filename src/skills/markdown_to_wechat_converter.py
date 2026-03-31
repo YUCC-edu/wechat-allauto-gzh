@@ -88,8 +88,22 @@ class MarkdownToWeChatConverter:
         """
         html_content = markdown_text
         
-        # 按顺序处理各元素
-        html_content = self._process_code_blocks(html_content)
+        # 第一步：提取并保护代码块内容（用占位符替换）
+        code_blocks = []
+        
+        def protect_code_block(match):
+            code_blocks.append(match.group(2))  # 保存原始代码块内容
+            index = len(code_blocks) - 1
+            return f"__CODE_BLOCK_{index}__"
+        
+        # 匹配 ```xxx\n...\n``` 并保存内容
+        html_content = re.sub(
+            r"```(\w+)?\n([\s\S]*?)```",
+            protect_code_block,
+            html_content
+        )
+        
+        # 第二步：处理其他 Markdown 元素
         html_content = self._process_custom_containers(html_content)
         html_content = self._process_headings(html_content)
         html_content = self._process_emphasis(html_content)
@@ -101,14 +115,33 @@ class MarkdownToWeChatConverter:
         html_content = self._process_blockquotes(html_content)
         html_content = self._process_hr(html_content)
         html_content = self._process_paragraphs(html_content)
+        
+        # 第三步：恢复代码块（转换为 HTML）
+        def restore_code_block(match):
+            index = int(match.group(1))
+            code = code_blocks[index]
+            escaped = self._escape_html(code)
+            is_wenyan = self._is_category("wenyan")
+            primary_color = self._get_primary_color()
+            
+            if is_wenyan:
+                style = f"font-size: 14px; line-height: 1.8; margin: 16px 0; padding: 16px; border-radius: 8px; background: #f8fafc; color: #333; border-top: 3px solid {primary_color}; box-shadow: 0 2px 6px rgba(0,0,0,0.05);"
+            else:
+                style = self._style_to_str(self.theme.get("code_block"))
+            
+            return f'<section style="margin: 16px 0; max-width: 100%; box-sizing: border-box;"><pre style="{style}; overflow-x: auto; font-family: \'Courier New\', monospace; box-sizing: border-box;"><code style="display: block; white-space: pre; font-size: 13px; line-height: 1.6;">{escaped}</code></pre></section>'
+        
+        html_content = re.sub(r"__CODE_BLOCK_(\d+)__", restore_code_block, html_content)
+        
+        # 第四步：清理（此时代码块已经是 HTML，不会被影响）
         html_content = self._cleanup(html_content)
         
         return html_content
     
     def _process_code_blocks(self, text: str) -> str:
-        """处理代码块"""
-        is_wenyan = self._is_category("wenyan")
-        primary_color = self._get_primary_color()
+        """处理代码块（此方法现在只返回原始文本，因为我们在 convert 中处理）"""
+        # 代码块处理在 convert 方法中实现，这里不做任何操作
+        return text
         
         if is_wenyan:
             style = f"font-size: 14px; line-height: 1.8; margin: 16px 0; padding: 16px; border-radius: 8px; background: #f8fafc; color: #333; border-top: 3px solid {primary_color}; box-shadow: 0 2px 6px rgba(0,0,0,0.05);"
@@ -504,14 +537,34 @@ class MarkdownToWeChatConverter:
     
     def _cleanup(self, text: str) -> str:
         """清理和优化 HTML"""
+        # 保护 <pre> 标签内容（防止删除换行）
+        pre_contents = []
+        
+        def protect_pre(match):
+            pre_contents.append(match.group(0))
+            return f"__PRE_CONTENT_{len(pre_contents) - 1}__"
+        
+        # 先保护 <pre> 内容
+        text = re.sub(r'<pre[^>]*>[\s\S]*?</pre>', protect_pre, text)
+        
         # 合并多个空行
         text = re.sub(r"\n{2,}", "\n", text)
+        
         # 去除每行首尾空格
         text = "\n".join(line.strip() for line in text.split("\n"))
+        
         # 清理标签之间的空白
         text = re.sub(r">[\s\n]+<", "><", text)
+        
         # 移除所有换行符（微信不支持）
         text = text.replace("\n", "")
+        
+        # 恢复 <pre> 内容
+        def restore_pre(match):
+            index = int(match.group(1))
+            return pre_contents[index]
+        
+        text = re.sub(r"__PRE_CONTENT_(\d+)__", restore_pre, text)
         
         return text.strip()
 
