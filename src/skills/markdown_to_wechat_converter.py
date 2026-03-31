@@ -72,6 +72,33 @@ class MarkdownToWeChatConverter:
         """获取主题主色调"""
         return self.theme.get("colors", {}).get("primary", "#ec4899")
     
+    def _get_contrast_color(self, hex_color: str) -> str:
+        """
+        根据背景色返回对比色（黑色或白色），使用 YIQ 亮度公式
+        
+        Args:
+            hex_color: 十六进制颜色值，如 '#ec4899'
+            
+        Returns:
+            '#000000' (黑色) 或 '#ffffff' (白色)
+        """
+        # 移除 # 符号
+        hex_color = hex_color.lstrip('#')
+        
+        # 解析 RGB 分量
+        try:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+        except (ValueError, IndexError):
+            return "#000000"
+        
+        # YIQ 亮度公式: (R*299 + G*587 + B*114) / 1000
+        yiq = (r * 299 + g * 587 + b * 114) / 1000
+        
+        # 亮度 > 128 返回黑色，否则返回白色
+        return "#000000" if yiq > 128 else "#ffffff"
+    
     def _is_category(self, category: str) -> bool:
         """检查当前主题是否属于指定分类"""
         return self.theme.get("category") == category
@@ -157,63 +184,293 @@ class MarkdownToWeChatConverter:
         return re.sub(r"```(\w+)?\n([\s\S]*?)```", replace_code_block, text)
     
     def _process_custom_containers(self, text: str) -> str:
-        """处理自定义容器 ::: release 和 ::: grid"""
+        """
+        处理自定义容器 ::: type [params...]\n content \n:::
+        
+        支持的容器类型:
+        - release [主标题] [副标题]: 精选文章卡片
+        - grid: 多列网格布局
+        - timeline: 时间线布局
+        - steps: 步骤指示器
+        - compare: 对比布局（正确/错误）
+        - focus: 金句卡片
+        """
         primary_color = self._get_primary_color()
         
-        def replace_release(match):
-            content = match.group(1)
-            inner_html = content
-            inner_html = re.sub(r"^# (.+)$", f'<div style="font-size: 24px; font-weight: bold; color: #333; margin: 12px 0; line-height: 1.4;">\\1</div>', inner_html, flags=re.MULTILINE)
-            inner_html = re.sub(r"\*\*(.+?)\*\*", f'<span style="background-color: {primary_color}33; color: {primary_color}; padding: 2px 6px; border-radius: 4px; display: inline-block;">\\1</span>', inner_html)
+        # 新的统一正则: ::: (\w+)(?:[ \t]+(.*?))?\n([\s\S]*?)\n:::
+        # group(1) = 类型, group(2) = 参数(可选), group(3) = 内容
+        def replace_container(match):
+            container_type = match.group(1)
+            params = match.group(2) or ""  # 参数（可选）
+            content = match.group(3)
             
-            return f'''
-          <section style="background-color: #fcf9f2; border-radius: 12px; margin: 24px 0; border: 1px solid #f0ebe1; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-            <div style="padding: 24px 20px 60px 20px; position: relative;">
-              <div style="font-size: 11px; font-weight: bold; color: {primary_color}; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 16px;">WEEKLY SELECTION</div>
-              <div style="font-size: 13px; color: #999; margin-bottom: 8px;">不仅仅是文字</div>
-              {inner_html}
-            </div>
-            <div style="background-color: {primary_color}; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between;">
-              <span style="color: #fff; font-weight: bold; font-size: 14px;">文摘</span>
-              <div>
-                <span style="color: rgba(255,255,255,0.9); font-size: 11px; border: 1px solid rgba(255,255,255,0.4); padding: 2px 6px; border-radius: 4px; margin-left: 6px;">可共赏</span>
-                <span style="color: rgba(255,255,255,0.9); font-size: 11px; border: 1px solid rgba(255,255,255,0.4); padding: 2px 6px; border-radius: 4px; margin-left: 6px;">慢阅读</span>
-                <span style="color: rgba(255,255,255,0.9); font-size: 11px; border: 1px solid rgba(255,255,255,0.4); padding: 2px 6px; border-radius: 4px; margin-left: 6px;">治愈系</span>
-              </div>
-            </div>
-          </section>'''
+            if container_type == "release":
+                return self._render_release(content, params, primary_color)
+            elif container_type == "grid":
+                return self._render_grid(content, params, primary_color)
+            elif container_type == "timeline":
+                return self._render_timeline(content, params, primary_color)
+            elif container_type == "steps":
+                return self._render_steps(content, params, primary_color)
+            elif container_type == "compare":
+                return self._render_compare(content, params, primary_color)
+            elif container_type == "focus":
+                return self._render_focus(content, params, primary_color)
+            else:
+                # 未知类型，返回原始内容
+                return match.group(0)
         
-        text = re.sub(r"::: release\n([\s\S]*?)\n:::", replace_release, text)
-        
-        def replace_grid(match):
-            content = match.group(1)
-            cards = [c.strip() for c in content.split("---") if c.strip()]
-            
-            grid_html = '<section style="display: flex; justify-content: space-between; align-items: stretch; margin: 20px 0; overflow-x: auto; padding-bottom: 8px; gap: 8px;">'
-            
-            for i, card in enumerate(cards):
-                is_first = i == 0
-                bg = primary_color if is_first else "#fcfcfc"
-                color = "#fff" if is_first else "#333"
-                border = "none" if is_first else "1px solid #f0f0f0"
-                
-                lines = card.split("\n")
-                sub_title = lines[0] if lines else ""
-                main_text = "<br>".join(lines[1:]) if len(lines) > 1 else ""
-                
-                grid_html += f'''
-              <div style="flex: 1; min-width: 110px; background-color: {bg}; border-radius: 8px; padding: 12px; border: {border}; box-sizing: border-box;">
-                <div style="font-size: 10px; font-weight: bold; color: {'rgba(255,255,255,0.7)' if is_first else '#aaa'}; margin-bottom: 6px;">PART 0{i + 1}</div>
-                <div style="font-size: 14px; font-weight: bold; color: {color}; line-height: 1.4; margin-bottom: 6px;">{sub_title}</div>
-                <div style="font-size: 11px; color: {'rgba(255,255,255,0.9)' if is_first else '#777'}; line-height: 1.5;">{main_text}</div>
-              </div>'''
-            
-            grid_html += "</section>"
-            return grid_html
-        
-        text = re.sub(r"::: grid\n([\s\S]*?)\n:::", replace_grid, text)
+        # 匹配 ::: type [params...]\n content \n:::
+        text = re.sub(r"::: (\w+)(?:[ \t]+(.*?))?\n([\s\S]*?)\n:::", replace_container, text)
         
         return text
+    
+    def _render_release(self, content: str, params: str, primary_color: str) -> str:
+        """
+        渲染 release 组件
+        
+        参数格式: [主标题] [副标题]
+        例如: ::: release 每周精选 精选文章推荐
+        """
+        # 解析参数：默认 "WEEKLY SELECTION" 和 "不仅仅是文字"
+        param_parts = params.strip().split() if params.strip() else []
+        main_title = param_parts[0] if len(param_parts) >= 1 else "WEEKLY SELECTION"
+        sub_title = param_parts[1] if len(param_parts) >= 2 else "不仅仅是文字"
+        
+        # 使用对比色确保白色文字在主色背景上可读
+        text_color = self._get_contrast_color(primary_color)
+        
+        inner_html = content
+        inner_html = re.sub(r"^# (.+)$", f'<div style="font-size: 24px; font-weight: bold; color: #333; margin: 12px 0; line-height: 1.4;">\\1</div>', inner_html, flags=re.MULTILINE)
+        inner_html = re.sub(r"\*\*(.+?)\*\*", f'<span style="background-color: {primary_color}33; color: {primary_color}; padding: 2px 6px; border-radius: 4px; display: inline-block;">\\1</span>', inner_html)
+        
+        return f'''
+<section style="background-color: #fcf9f2; border-radius: 12px; margin: 24px 0; border: 1px solid #f0ebe1; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <div style="padding: 24px 20px 60px 20px; position: relative;">
+    <div style="font-size: 11px; font-weight: bold; color: {primary_color}; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 16px;">{main_title}</div>
+    <div style="font-size: 13px; color: #999; margin-bottom: 8px;">{sub_title}</div>
+    {inner_html}
+  </div>
+  <div style="background-color: {primary_color}; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between;">
+    <span style="color: {text_color}; font-weight: bold; font-size: 14px;">文摘</span>
+    <div>
+      <span style="color: rgba(255,255,255,0.9); font-size: 11px; border: 1px solid rgba(255,255,255,0.4); padding: 2px 6px; border-radius: 4px; margin-left: 6px;">可共赏</span>
+      <span style="color: rgba(255,255,255,0.9); font-size: 11px; border: 1px solid rgba(255,255,255,0.4); padding: 2px 6px; border-radius: 4px; margin-left: 6px;">慢阅读</span>
+      <span style="color: rgba(255,255,255,0.9); font-size: 11px; border: 1px solid rgba(255,255,255,0.4); padding: 2px 6px; border-radius: 4px; margin-left: 6px;">治愈系</span>
+    </div>
+  </div>
+</section>'''
+    
+    def _render_grid(self, content: str, params: str, primary_color: str) -> str:
+        """渲染 grid 组件"""
+        cards = [c.strip() for c in content.split("---") if c.strip()]
+        
+        grid_html = '<section style="display: flex; justify-content: space-between; align-items: stretch; margin: 20px 0; overflow-x: auto; padding-bottom: 8px; gap: 8px;">'
+        
+        for i, card in enumerate(cards):
+            is_first = i == 0
+            bg = primary_color if is_first else "#fcfcfc"
+            color = self._get_contrast_color(primary_color) if is_first else "#333"
+            border = "none" if is_first else "1px solid #f0f0f0"
+            
+            lines = card.split("\n")
+            sub_title = lines[0] if lines else ""
+            main_text = "<br>".join(lines[1:]) if len(lines) > 1 else ""
+            
+            grid_html += f'''
+  <div style="flex: 1; min-width: 110px; background-color: {bg}; border-radius: 8px; padding: 12px; border: {border}; box-sizing: border-box;">
+    <div style="font-size: 10px; font-weight: bold; color: {'rgba(255,255,255,0.7)' if is_first else '#aaa'}; margin-bottom: 6px;">PART 0{i + 1}</div>
+    <div style="font-size: 14px; font-weight: bold; color: {color}; line-height: 1.4; margin-bottom: 6px;">{sub_title}</div>
+    <div style="font-size: 11px; color: {'rgba(255,255,255,0.9)' if is_first else '#777'}; line-height: 1.5;">{main_text}</div>
+  </div>'''
+        
+        grid_html += "</section>"
+        return grid_html
+    
+    def _render_timeline(self, content: str, params: str, primary_color: str) -> str:
+        """
+        渲染 timeline 组件
+        
+        内容格式: 使用 --- 分隔每一项
+        每项格式: 时间 + 描述
+        例如:
+        ::: timeline
+        2024-01 完成需求分析
+        ---
+        2024-02 完成设计文档
+        ---
+        2024-03 开始开发
+        :::
+        """
+        items = [item.strip() for item in content.split("---") if item.strip()]
+        
+        timeline_html = f'''<section style="margin: 24px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <div style="position: relative; padding-left: 24px;">'''
+        
+        for i, item in enumerate(items):
+            is_last = i == len(items) - 1
+            lines = item.split("\n", 1)
+            time_text = lines[0].strip() if lines else ""
+            desc_text = lines[1].strip() if len(lines) > 1 else ""
+            
+            # 最后一项不需要垂直连线
+            line_style = "" if is_last else f"border-left: 2px solid {primary_color}40;"
+            
+            timeline_html += f'''
+    <div style="position: relative; margin-bottom: {'0' if is_last else '20px'}; {line_style}">
+      <div style="position: absolute; left: -28px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background-color: {primary_color}; box-shadow: 0 0 0 4px {primary_color}20;"></div>
+      <div style="font-size: 12px; color: {primary_color}; font-weight: bold; margin-bottom: 4px;">{time_text}</div>
+      <div style="font-size: 14px; color: #333; line-height: 1.6;">{desc_text}</div>
+    </div>'''
+        
+        timeline_html += '''
+  </div>
+</section>'''
+        
+        return timeline_html
+    
+    def _render_steps(self, content: str, params: str, primary_color: str) -> str:
+        """
+        渲染 steps 组件
+        
+        内容格式: 使用 --- 分隔每个步骤
+        每步骤格式: 步骤标题 + 描述
+        例如:
+        ::: steps
+        步骤一 调研需求
+        ---
+        步骤二 制定方案
+        ---
+        步骤三 开发实施
+        :::
+        """
+        items = [item.strip() for item in content.split("---") if item.strip()]
+        text_color = self._get_contrast_color(primary_color)
+        
+        steps_html = f'''<section style="margin: 24px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <div style="display: flex; flex-wrap: wrap; gap: 16px;">'''
+        
+        for i, item in enumerate(items):
+            num = f"0{i + 1}" if i < 9 else str(i + 1)
+            lines = item.split("\n", 1)
+            step_title = lines[0].strip() if lines else ""
+            step_desc = lines[1].strip() if len(lines) > 1 else ""
+            
+            steps_html += f'''
+    <div style="flex: 1; min-width: 200px; background-color: {primary_color}; border-radius: 8px; padding: 16px; box-sizing: border-box;">
+      <div style="display: inline-block; background-color: {text_color}; color: {primary_color}; font-size: 12px; font-weight: bold; padding: 4px 10px; border-radius: 12px; margin-bottom: 12px;">{num}</div>
+      <div style="font-size: 16px; font-weight: bold; color: {text_color}; margin-bottom: 8px;">{step_title}</div>
+      <div style="font-size: 13px; color: {'rgba(255,255,255,0.85)' if text_color == '#ffffff' else '#666'}; line-height: 1.5;">{step_desc}</div>
+    </div>'''
+        
+        steps_html += '''
+  </div>
+</section>'''
+        
+        return steps_html
+    
+    def _render_compare(self, content: str, params: str, primary_color: str) -> str:
+        """
+        渲染 compare 组件
+        
+        内容格式: 使用 --- 分隔左右两部分
+        左侧为浅绿色背景（正确/优点），右侧为浅红色背景（错误/缺点）
+        例如:
+        ::: compare
+        **优点**
+        - 方案一的优势
+        ---
+        **缺点**
+        - 方案一的不足
+        :::
+        """
+        parts = [p.strip() for p in content.split("---") if p.strip()]
+        
+        if len(parts) < 2:
+            # 如果不足两部分，补充空内容
+            while len(parts) < 2:
+                parts.append("")
+        
+        left_content = parts[0]
+        right_content = parts[1]
+        
+        compare_html = '''<section style="margin: 24px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <div style="display: flex; gap: 16px; flex-wrap: wrap;">'''
+        
+        # 左侧（正确/优点）- 浅绿色背景
+        compare_html += f'''
+    <div style="flex: 1; min-width: 200px; background-color: #f0fdf4; border-radius: 8px; padding: 16px; border: 1px solid #bbf7d0; box-sizing: border-box;">
+      <div style="display: inline-block; background-color: #22c55e; color: #fff; font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; margin-bottom: 12px;">正确</div>
+      <div style="font-size: 14px; color: #166534; line-height: 1.6;">{left_content}</div>
+    </div>'''
+        
+        # 右侧（错误/缺点）- 浅红色背景
+        compare_html += f'''
+    <div style="flex: 1; min-width: 200px; background-color: #fef2f2; border-radius: 8px; padding: 16px; border: 1px solid #fecaca; box-sizing: border-box;">
+      <div style="display: inline-block; background-color: #ef4444; color: #fff; font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; margin-bottom: 12px;">错误</div>
+      <div style="font-size: 14px; color: #991b1b; line-height: 1.6;">{right_content}</div>
+    </div>'''
+        
+        compare_html += '''
+  </div>
+</section>'''
+        
+        return compare_html
+    
+    def _render_focus(self, content: str, params: str, primary_color: str) -> str:
+        """
+        渲染 focus 组件
+        
+        全宽金句卡片，使用主题色 10% 透明度作为背景，上下带主题色边框，
+        中间显示大引号和加粗居中文案
+        例如:
+        ::: focus
+        这是一句非常重要的金句
+        :::
+        """
+        # 生成主题色 10% 透明度背景
+        bg_rgba = self._hex_to_rgba(primary_color, 0.1)
+        border_color = primary_color
+        text_color = self._get_contrast_color(primary_color)
+        
+        # 解析内容，取第一行作为主要文案
+        lines = [l.strip() for l in content.strip().split("\n") if l.strip()]
+        main_text = lines[0] if lines else content.strip()
+        
+        # 处理粗体标记
+        display_text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", main_text)
+        
+        focus_html = f'''<section style="margin: 24px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <div style="background-color: {bg_rgba}; border-top: 3px solid {border_color}; border-bottom: 3px solid {border_color}; border-radius: 0; padding: 32px 24px; text-align: center; position: relative;">
+    <div style="font-size: 48px; color: {primary_color}40; position: absolute; top: 8px; left: 24px; font-family: Georgia, serif;">"</div>
+    <div style="font-size: 20px; font-weight: bold; color: {text_color}; line-height: 1.6; position: relative; z-index: 1;">{display_text}</div>
+    <div style="font-size: 48px; color: {primary_color}40; position: absolute; bottom: -16px; right: 24px; font-family: Georgia, serif;">"</div>
+  </div>
+</section>'''
+        
+        return focus_html
+    
+    def _hex_to_rgba(self, hex_color: str, alpha: float) -> str:
+        """
+        将十六进制颜色转换为 RGBA 字符串
+        
+        Args:
+            hex_color: 十六进制颜色值，如 '#ec4899'
+            alpha: 透明度，0.0 - 1.0
+            
+        Returns:
+            RGBA 字符串，如 'rgba(236, 72, 153, 0.1)'
+        """
+        hex_color = hex_color.lstrip('#')
+        
+        try:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+        except (ValueError, IndexError):
+            return f"rgba(0, 0, 0, {alpha})"
+        
+        return f"rgba({r}, {g}, {b}, {alpha})"
     
     def _process_headings(self, text: str) -> str:
         """处理标题"""
@@ -536,16 +793,25 @@ class MarkdownToWeChatConverter:
         return "\n".join(result)
     
     def _cleanup(self, text: str) -> str:
-        """清理和优化 HTML"""
-        # 保护 <pre> 标签内容（防止删除换行）
-        pre_contents = []
+        """
+        清理和优化 HTML
         
-        def protect_pre(match):
-            pre_contents.append(match.group(0))
-            return f"__PRE_CONTENT_{len(pre_contents) - 1}__"
+        在移除换行符时保护 <pre> 和 <section> 标签内容，
+        防止破坏代码块和时间线等嵌套结构的换行显示。
+        """
+        protected_contents = []
         
-        # 先保护 <pre> 内容
-        text = re.sub(r'<pre[^>]*>[\s\S]*?</pre>', protect_pre, text)
+        def protect_content(match):
+            """通用内容保护函数"""
+            protected_contents.append(match.group(0))
+            return f"__PROTECTED_CONTENT_{len(protected_contents) - 1}__"
+        
+        # 1. 保护 <pre> 标签内容（代码块需要保留原始换行）
+        text = re.sub(r'<pre[^>]*>[\s\S]*?</pre>', protect_content, text)
+        
+        # 2. 保护 <section> 标签内容（包含新组件的嵌套结构）
+        # 匹配 <section ...>...</section> 完整结构
+        text = re.sub(r'<section[^>]*>[\s\S]*?</section>', protect_content, text)
         
         # 合并多个空行
         text = re.sub(r"\n{2,}", "\n", text)
@@ -559,12 +825,12 @@ class MarkdownToWeChatConverter:
         # 移除所有换行符（微信不支持）
         text = text.replace("\n", "")
         
-        # 恢复 <pre> 内容
-        def restore_pre(match):
+        # 恢复所有受保护内容
+        def restore_content(match):
             index = int(match.group(1))
-            return pre_contents[index]
+            return protected_contents[index]
         
-        text = re.sub(r"__PRE_CONTENT_(\d+)__", restore_pre, text)
+        text = re.sub(r"__PROTECTED_CONTENT_(\d+)__", restore_content, text)
         
         return text.strip()
 
