@@ -1,0 +1,708 @@
+import requests
+import json
+import time
+import random
+from typing import Dict, List, Optional, Any, Union
+from functools import wraps
+
+# 导入 OpenClaw 兼容模块
+try:
+    from .openclaw_compat import skill_info, SkillException, Input
+except ImportError:
+    # 如果相对导入失败，尝试绝对导入
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from openclaw_compat import skill_info, SkillException, Input
+
+# ==========================================
+# 自定义异常类（继承自 OpenClaw 基类）
+# ==========================================
+class WeChatAPIError(SkillException):
+    """微信公众号 API 错误"""
+    def __init__(self, errcode: int, errmsg: str, endpoint: str = ""):
+        self.errcode = errcode
+        self.errmsg = errmsg
+        self.endpoint = endpoint
+        message = f"微信 API 错误 [{errcode}]: {errmsg} (endpoint: {endpoint})"
+        super().__init__(message, error_code=f"WECHAT_{errcode}", details={"errmsg": errmsg, "endpoint": endpoint})
+
+class NetworkError(SkillException):
+    """网络请求错误"""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, error_code="NETWORK_ERROR", details=details)
+
+class ValidationError(SkillException):
+    """参数验证错误"""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, error_code="VALIDATION_ERROR", details=details)
+
+class TokenExpiredError(SkillException):
+    """Access Token 过期"""
+    def __init__(self, message: str = "Access token 已过期"):
+        super().__init__(message, error_code="TOKEN_EXPIRED")
+
+# ==========================================
+# 装饰器：指数退避重试
+# ==========================================
+def retry_with_backoff(max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 10.0):
+    """指数退避重试装饰器"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (requests.exceptions.RequestException, NetworkError) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        # 计算指数退避延迟（添加随机抖动）
+                        delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                        time.sleep(delay)
+            raise NetworkError(f"在 {max_retries} 次重试后仍然失败: {last_exception}")
+        return wrapper
+    return decorator
+
+# ==========================================
+# 输入验证工具函数
+# ==========================================
+def validate_string(value: Any, field_name: str, min_length: int = 1, max_length: int = None) -> str:
+    """验证字符串参数"""
+    if not isinstance(value, str):
+        raise ValidationError(f"{field_name} 必须是字符串类型，当前类型: {type(value).__name__}")
+    if len(value) < min_length:
+        raise ValidationError(f"{field_name} 长度不能小于 {min_length}")
+    if max_length and len(value) > max_length:
+        raise ValidationError(f"{field_name} 长度不能超过 {max_length}")
+    return value
+
+def validate_not_empty(value: Any, field_name: str) -> Any:
+    """验证非空值"""
+    if value is None or (isinstance(value, (str, list, dict)) and len(value) == 0):
+        raise ValidationError(f"{field_name} 不能为空")
+    return value
+
+@skill_info(
+    name="wechat_capability_manager",
+    description="微信公众号能力管理 API 客户端，支持自定义菜单、草稿箱、发布能力、素材管理、用户管理、留言管理等功能",
+    version="2.0.0",
+    author="OpenClaw Skill Team",
+    tags=["wechat", "api", "management", "official-account"],
+    inputs={
+        "app_id": Input(str, "微信公众号 AppID", required=True, example="wx1234567890abcdef"),
+        "app_secret": Input(str, "微信公众号 AppSecret", required=True, example="1234567890abcdef1234567890abcdef"),
+        "max_retries": Input(int, "最大重试次数", required=False, default=3, example=3)
+    }
+)
+@skill_info(
+    name="wechat_capability",
+    description="微信公众号能力管理 API 客户端，支持自定义菜单、草稿箱、发布能力、素材管理、用户管理、留言管理等功能",
+    version="2.0.0",
+    author="OpenClaw Team",
+    tags=["wechat", "official_account", "api", "management"],
+    icon="📱"
+)
+class WeChatCapabilityManager:
+    """微信公众号能力管理 API 客户端（鲁棒性增强版）"""
+    
+    # Token 过期错误码
+    TOKEN_EXPIRED_CODES = {40001, 40014, 42001, 40028}
+    
+    def __init__(self, app_id: str, app_secret: str, max_retries: int = 3):
+        # 输入验证
+        self.app_id = validate_string(app_id, "app_id", min_length=1, max_length=128)
+        self.app_secret = validate_string(app_secret, "app_secret", min_length=1, max_length=128)
+        self.access_token: Optional[str] = None
+        self.max_retries = max_retries
+        
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=10.0)
+    def get_access_token(self) -> str:
+        """获取 access_token（带重试机制）"""
+        url = "https://api.weixin.qq.com/cgi-bin/token"
+        params = {
+            "grant_type": "client_credential",
+            "appid": self.app_id,
+            "secret": self.app_secret
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.Timeout:
+            raise NetworkError("获取 access_token 超时，请检查网络连接")
+        except requests.exceptions.ConnectionError as e:
+            raise NetworkError(f"无法连接到微信服务器: {e}")
+        except requests.exceptions.HTTPError as e:
+            raise WeChatAPIError(-1, f"HTTP 错误: {e}", endpoint="/token")
+        except json.JSONDecodeError as e:
+            raise WeChatAPIError(-1, f"无效的 JSON 响应: {e}", endpoint="/token")
+        
+        if "access_token" in data:
+            self.access_token = data["access_token"]
+            return self.access_token
+        
+        # 处理微信返回的错误
+        errcode = data.get("errcode", -1)
+        errmsg = data.get("errmsg", "未知错误")
+        raise WeChatAPIError(errcode, errmsg, endpoint="/token")
+
+    # 微信错误码映射表
+    WECHAT_ERROR_CODES = {
+        -1: "系统繁忙，请稍后再试",
+        0: "请求成功",
+        40001: "access_token 已过期或无效",
+        40002: "不合法的凭证类型",
+        40003: "不合法的 OpenID",
+        40004: "不合法的媒体文件类型",
+        40005: "不合法的文件类型",
+        40006: "不合法的文件大小",
+        40007: "不合法的媒体文件 id",
+        40008: "不合法的消息类型",
+        40009: "不合法的图片文件大小",
+        40010: "不合法的语音文件大小",
+        40011: "不合法的视频文件大小",
+        40012: "不合法的缩略图文件大小",
+        40013: "不合法的 AppID",
+        40014: "不合法的 access_token",
+        40015: "不合法的菜单类型",
+        40016: "不合法的按钮个数",
+        40017: "不合法的按钮类型",
+        40018: "不合法的按钮名字长度",
+        40019: "不合法的按钮 KEY 长度",
+        40020: "不合法的按钮 URL 长度",
+        40021: "不合法的菜单版本号",
+        40022: "不合法的子菜单级数",
+        40023: "不合法的子菜单按钮个数",
+        40024: "不合法的子菜单按钮类型",
+        40025: "不合法的子菜单按钮名字长度",
+        40026: "不合法的子菜单按钮 KEY 长度",
+        40027: "不合法的子菜单按钮 URL 长度",
+        40028: "不合法的自定义菜单使用用户",
+        40029: "不合法的 oauth_code",
+        40030: "不合法的 refresh_token",
+        40031: "不合法的 openid 列表",
+        40032: "不合法的 openid 列表长度",
+        40033: "不合法的请求字符",
+        40035: "不合法的参数",
+        40038: "不合法的请求格式",
+        40039: "不合法的 URL 长度",
+        40048: "不合法的 url 域名",
+        40050: "不合法的 article_tag 标签",
+        40051: "不合法的 article_tag 标签长度",
+        40060: "不合法的 article_id",
+        40061: "不合法的 article_id 数量",
+        41001: "缺少 access_token 参数",
+        41002: "缺少 appid 参数",
+        41003: "缺少 refresh_token 参数",
+        41004: "缺少 secret 参数",
+        41005: "缺少多媒体文件数据",
+        41006: "缺少 media_id 参数",
+        41007: "缺少子菜单数据",
+        41008: "缺少 oauth code",
+        41009: "缺少 openid",
+        42001: "access_token 超时",
+        42002: "refresh_token 超时",
+        43001: "需要 GET 请求",
+        43002: "需要 POST 请求",
+        43003: "需要 HTTPS 请求",
+        43004: "需要接收者关注",
+        43005: "需要好友关系",
+        44001: "多媒体文件为空",
+        44002: "POST 的数据包为空",
+        44003: "图文消息内容为空",
+        44004: "文本消息内容为空",
+        45001: "多媒体文件大小超过限制",
+        45002: "消息内容超过限制",
+        45003: "标题字段超过限制",
+        45004: "描述字段超过限制",
+        45005: "链接字段超过限制",
+        45006: "图片链接字段超过限制",
+        45007: "语音播放时间超过限制",
+        45008: "图文消息超过限制",
+        45009: "接口调用超过频率限制",
+        45010: "创建菜单个数超过限制",
+        45015: "回复时间超过限制",
+        45016: "系统分组，不允许修改",
+        45017: "分组名字过长",
+        45018: "分组数量超过上限",
+        45047: "客服接口下行条数超过上限",
+        45064: "创建菜单包含未关联的小程序",
+        45065: "同样错误的请求过于频繁",
+        45072: "content 字段超过长度限制",
+        45073: "媒体文件大小超过限制",
+        45074: "请求地址不是 mp.weixin.qq.com",
+        45075: "图片大小超过限制",
+        45076: "草稿箱数量超过限制",
+        46001: "不存在媒体数据",
+        46002: "不存在的菜单版本",
+        46003: "不存在的菜单数据",
+        46004: "不存在的用户",
+        46005: "草稿不存在",
+        47001: "解析 JSON/XML 内容错误",
+        48001: "api 未授权",
+        48002: "api 禁止",
+        48003: "接口无权限",
+        48004: "api 的传入 json 无效",
+        48005: "api 接口需要 post 请求",
+        48006: "api 接口需要 get 请求",
+        48008: "api 传入参数不正确",
+        50001: "用户未授权该 api",
+        50002: "用户受限",
+        50003: "用户未关注公众号",
+        50004: "用户被加入黑名单",
+        50005: "用户被限制",
+        50006: "用户未绑定微信",
+        61000: "请求参数错误",
+        61001: "access_token 无效",
+        61002: "refresh_token 无效",
+        61003: "appid 无效",
+        61004: "openid 无效",
+        61005: "appsecret 无效",
+        61006: "grant_type 无效",
+        61007: "code 无效",
+        61008: "refresh_token 过期",
+        61009: "access_token 过期",
+        61010: "access_token 无效",
+        61011: "appid 不匹配",
+        61012: "refresh_token 无效",
+        61013: "openid 无效",
+        61014: "appsecret 无效",
+        61015: "grant_type 无效",
+        61016: "code 无效",
+        61017: "refresh_token 过期",
+        61018: "access_token 过期",
+        61019: "access_token 无效",
+        61020: "appid 不匹配",
+    }
+
+    def __init__(self, app_id: str, app_secret: str, max_retries: int = 3):
+        # 输入验证
+        self.app_id = validate_string(app_id, "app_id", min_length=1, max_length=128)
+        self.app_secret = validate_string(app_secret, "app_secret", min_length=1, max_length=128)
+        self.access_token: Optional[str] = None
+        self.max_retries = max_retries
+        
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=10.0)
+    def get_access_token(self) -> str:
+        """获取 access_token（带重试机制）"""
+        url = "https://api.weixin.qq.com/cgi-bin/token"
+        params = {
+            "grant_type": "client_credential",
+            "appid": self.app_id,
+            "secret": self.app_secret
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.Timeout:
+            raise NetworkError("获取 access_token 超时，请检查网络连接")
+        except requests.exceptions.ConnectionError as e:
+            raise NetworkError(f"无法连接到微信服务器: {e}")
+        except requests.exceptions.HTTPError as e:
+            raise WeChatAPIError(-1, f"HTTP 错误: {e}", endpoint="/token")
+        except json.JSONDecodeError as e:
+            raise WeChatAPIError(-1, f"无效的 JSON 响应: {e}", endpoint="/token")
+        
+        if "access_token" in data:
+            self.access_token = data["access_token"]
+            return self.access_token
+        
+        # 处理微信返回的错误
+        errcode = data.get("errcode", -1)
+        errmsg = data.get("errmsg", "未知错误")
+        raise WeChatAPIError(errcode, errmsg, endpoint="/token")
+
+    def _request(self, method: str, endpoint: str, data: dict = None, params: dict = None, retry_on_token_expired: bool = True) -> dict:
+        """通用请求方法（鲁棒性增强版）
+        
+        支持自动 Token 刷新、指数退避重试、错误码映射
+        """
+        # 确保有 access_token
+        if not self.access_token:
+            self.get_access_token()
+        
+        # 构建 URL 和参数
+        url = f"https://api.weixin.qq.com{endpoint}"
+        if params is None:
+            params = {}
+        params['access_token'] = self.access_token
+        
+        # 执行请求（带重试）
+        last_exception = None
+        for attempt in range(self.max_retries):
+            try:
+                if method.upper() == 'GET':
+                    response = requests.get(url, params=params, timeout=10)
+                else:
+                    payload = json.dumps(data, ensure_ascii=False).encode('utf-8') if data else None
+                    response = requests.post(
+                        url, 
+                        params=params, 
+                        data=payload, 
+                        headers={'Content-Type': 'application/json'}, 
+                        timeout=10
+                    )
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                # 检查微信错误码
+                errcode = result.get('errcode', 0)
+                if errcode != 0:
+                    # Token 过期，尝试刷新并重试
+                    if errcode in self.TOKEN_EXPIRED_CODES and retry_on_token_expired and attempt < self.max_retries - 1:
+                        self.get_access_token()
+                        params['access_token'] = self.access_token
+                        continue
+                    
+                    # 其他错误，抛出异常
+                    errmsg = result.get('errmsg', self.WECHAT_ERROR_CODES.get(errcode, '未知错误'))
+                    raise WeChatAPIError(errcode, errmsg, endpoint=endpoint)
+                
+                return result
+                
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    delay = min(2 ** attempt + random.uniform(0, 1), 10)
+                    time.sleep(delay)
+                continue
+            except WeChatAPIError:
+                raise
+            except Exception as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    continue
+                break
+        
+        # 所有重试都失败了
+        if isinstance(last_exception, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+            raise NetworkError(f"在 {self.max_retries} 次重试后仍然无法连接到微信服务器: {last_exception}")
+        raise WeChatAPIError(-1, f"请求失败: {last_exception}", endpoint=endpoint)
+
+    # ==========================================
+    # 1. 自定义菜单管理 (Custom Menu)
+    # ==========================================
+    def create_menu(self, menu_data: dict) -> dict:
+        """创建自定义菜单"""
+        return self._request('POST', '/cgi-bin/menu/create', data=menu_data)
+        
+    def get_menu(self) -> dict:
+        """查询自定义菜单"""
+        return self._request('GET', '/cgi-bin/menu/get')
+        
+    def delete_menu(self) -> dict:
+        """删除自定义菜单"""
+        return self._request('GET', '/cgi-bin/menu/delete')
+
+    # ==========================================
+    # 2. 草稿箱管理 (Draft Management)
+    # ==========================================
+    def add_draft(self, articles: List[dict]) -> dict:
+        """新建草稿"""
+        return self._request('POST', '/cgi-bin/draft/add', data={"articles": articles})
+        
+    def get_draft(self, media_id: str) -> dict:
+        """获取草稿"""
+        return self._request('POST', '/cgi-bin/draft/get', data={"media_id": media_id})
+        
+    def delete_draft(self, media_id: str) -> dict:
+        """删除草稿"""
+        return self._request('POST', '/cgi-bin/draft/delete', data={"media_id": media_id})
+        
+    def update_draft(self, media_id: str, index: int, article: dict) -> dict:
+        """修改草稿"""
+        data = {
+            "media_id": media_id,
+            "index": index,
+            "articles": article
+        }
+        return self._request('POST', '/cgi-bin/draft/update', data=data)
+        
+    def get_draft_count(self) -> dict:
+        """获取草稿总数"""
+        return self._request('GET', '/cgi-bin/draft/count')
+        
+    def batch_get_draft(self, offset: int = 0, count: int = 20, no_content: int = 0) -> dict:
+        """获取草稿列表"""
+        data = {
+            "offset": offset,
+            "count": count,
+            "no_content": no_content
+        }
+        return self._request('POST', '/cgi-bin/draft/batchget', data=data)
+
+    # ==========================================
+    # 3. 发布能力 (Publish Management)
+    # ==========================================
+    def submit_publish(self, media_id: str) -> dict:
+        """发布接口"""
+        return self._request('POST', '/cgi-bin/freepublish/submit', data={"media_id": media_id})
+        
+    def get_publish_status(self, publish_id: str) -> dict:
+        """发布状态轮询接口"""
+        return self._request('POST', '/cgi-bin/freepublish/get', data={"publish_id": publish_id})
+        
+    def delete_publish(self, article_id: str, index: int = 0) -> dict:
+        """删除发布"""
+        data = {
+            "article_id": article_id,
+            "index": index
+        }
+        return self._request('POST', '/cgi-bin/freepublish/delete', data=data)
+        
+    def get_publish_article(self, article_id: str) -> dict:
+        """通过 article_id 获取已发布文章"""
+        return self._request('POST', '/cgi-bin/freepublish/getarticle', data={"article_id": article_id})
+        
+    def batch_get_publish(self, offset: int = 0, count: int = 20, no_content: int = 0) -> dict:
+        """获取成功发布列表"""
+        data = {
+            "offset": offset,
+            "count": count,
+            "no_content": no_content
+        }
+        return self._request('POST', '/cgi-bin/freepublish/batchget', data=data)
+
+    # ==========================================
+    # 4. 素材管理 (Asset Management)
+    # ==========================================
+    def get_material(self, media_id: str) -> dict:
+        """获取永久素材"""
+        return self._request('POST', '/cgi-bin/material/get_material', data={"media_id": media_id})
+        
+    def delete_material(self, media_id: str) -> dict:
+        """删除永久素材"""
+        return self._request('POST', '/cgi-bin/material/del_material', data={"media_id": media_id})
+        
+    def get_material_count(self) -> dict:
+        """获取素材总数"""
+        return self._request('GET', '/cgi-bin/material/get_materialcount')
+        
+    def batch_get_material(self, type: str, offset: int = 0, count: int = 20) -> dict:
+        """获取素材列表 (type: image, video, voice, news)"""
+        data = {
+            "type": type,
+            "offset": offset,
+            "count": count
+        }
+        return self._request('POST', '/cgi-bin/material/batchget_material', data=data)
+
+    # ==========================================
+    # 5. 用户管理 (User Management)
+    # ==========================================
+    def get_user_list(self, next_openid: str = "") -> dict:
+        """获取用户列表"""
+        params = {"next_openid": next_openid} if next_openid else {}
+        return self._request('GET', '/cgi-bin/user/get', params=params)
+        
+    def get_user_info(self, openid: str, lang: str = "zh_CN") -> dict:
+        """获取用户基本信息"""
+        params = {"openid": openid, "lang": lang}
+        return self._request('GET', '/cgi-bin/user/info', params=params)
+        
+    def update_user_remark(self, openid: str, remark: str) -> dict:
+        """设置用户备注名"""
+        data = {"openid": openid, "remark": remark}
+        return self._request('POST', '/cgi-bin/user/info/updateremark', data=data)
+
+    # ==========================================
+    # 6. 留言管理 (Comments Management)
+    # ==========================================
+    def open_comment(self, msg_data_id: int, index: int = 0) -> dict:
+        """打开已群发文章留言"""
+        data = {"msg_data_id": msg_data_id, "index": index}
+        return self._request('POST', '/cgi-bin/comment/open', data=data)
+        
+    def close_comment(self, msg_data_id: int, index: int = 0) -> dict:
+        """关闭已群发文章留言"""
+        data = {"msg_data_id": msg_data_id, "index": index}
+        return self._request('POST', '/cgi-bin/comment/close', data=data)
+        
+    def get_comment_list(self, msg_data_id: int, index: int = 0, begin: int = 0, count: int = 50, type: int = 0) -> dict:
+        """查看指定文章的留言数据 (type: 0普通, 1精选)"""
+        data = {
+            "msg_data_id": msg_data_id,
+            "index": index,
+            "begin": begin,
+            "count": count,
+            "type": type
+        }
+        return self._request('POST', '/cgi-bin/comment/list', data=data)
+        
+    def mark_elect_comment(self, msg_data_id: int, index: int, user_comment_id: int) -> dict:
+        """将留言标记精选"""
+        data = {"msg_data_id": msg_data_id, "index": index, "user_comment_id": user_comment_id}
+        return self._request('POST', '/cgi-bin/comment/markelect', data=data)
+        
+    def unmark_elect_comment(self, msg_data_id: int, index: int, user_comment_id: int) -> dict:
+        """将留言取消精选"""
+        data = {"msg_data_id": msg_data_id, "index": index, "user_comment_id": user_comment_id}
+        return self._request('POST', '/cgi-bin/comment/unmarkelect', data=data)
+        
+    def delete_comment(self, msg_data_id: int, index: int, user_comment_id: int) -> dict:
+        """删除留言"""
+        data = {"msg_data_id": msg_data_id, "index": index, "user_comment_id": user_comment_id}
+        return self._request('POST', '/cgi-bin/comment/delete', data=data)
+        
+    def reply_comment(self, msg_data_id: int, index: int, user_comment_id: int, content: str) -> dict:
+        """回复留言"""
+        data = {
+            "msg_data_id": msg_data_id,
+            "index": index,
+            "user_comment_id": user_comment_id,
+            "content": content
+        }
+        return self._request('POST', '/cgi-bin/comment/reply/add', data=data)
+        
+    def delete_reply(self, msg_data_id: int, index: int, user_comment_id: int) -> dict:
+        """删除回复"""
+        data = {"msg_data_id": msg_data_id, "index": index, "user_comment_id": user_comment_id}
+        return self._request('POST', '/cgi-bin/comment/reply/delete', data=data)
+
+    # ==========================================
+    # 7. 基础消息与群发 (Basic Messages & Batch Sends)
+    # ==========================================
+    def send_custom_message(self, touser: str, msgtype: str, **kwargs) -> dict:
+        """发送客服消息 (被动回复之外的普通消息)"""
+        data = {"touser": touser, "msgtype": msgtype}
+        data.update(kwargs)
+        return self._request('POST', '/cgi-bin/message/custom/send', data=data)
+        
+    def send_mass_message(self, filter_is_to_all: bool, filter_tag_id: int, msgtype: str, **kwargs) -> dict:
+        """根据标签进行群发"""
+        data = {
+            "filter": {"is_to_all": filter_is_to_all, "tag_id": filter_tag_id},
+            "msgtype": msgtype
+        }
+        data.update(kwargs)
+        return self._request('POST', '/cgi-bin/message/mass/sendall', data=data)
+
+    # ==========================================
+    # 8. 客服管理 (Customer Service)
+    # ==========================================
+    def add_kf_account(self, kf_account: str, nickname: str, password: str) -> dict:
+        """添加客服账号"""
+        data = {"kf_account": kf_account, "nickname": nickname, "password": password}
+        return self._request('POST', '/customservice/kfaccount/add', data=data)
+        
+    def get_kf_list(self) -> dict:
+        """获取所有客服账号"""
+        return self._request('GET', '/cgi-bin/customservice/getkflist')
+
+    # ==========================================
+    # 9. 数据统计 (Data Statistics)
+    # ==========================================
+    def get_article_summary(self, begin_date: str, end_date: str) -> dict:
+        """获取图文群发每日数据"""
+        data = {"begin_date": begin_date, "end_date": end_date}
+        return self._request('POST', '/datacube/getarticlesummary', data=data)
+        
+    def get_user_summary(self, begin_date: str, end_date: str) -> dict:
+        """获取用户增减数据"""
+        data = {"begin_date": begin_date, "end_date": end_date}
+        return self._request('POST', '/datacube/getusersummary', data=data)
+
+# ==========================================
+# OpenClaw Skill 接口定义
+# ==========================================
+
+@skill_info(
+    name="wechat_manage_capability",
+    description="微信公众号能力管理统一接口，支持自定义菜单、草稿箱、发布、素材、用户、留言等能力",
+    version="2.0.0",
+    author="WeChat Skill Team",
+    tags=["wechat", "公众号", "草稿箱", "发布", "素材管理", "用户管理"],
+    inputs={
+        "app_id": Input(str, "微信公众号 AppID", required=True, example="wx1234567890abcdef"),
+        "app_secret": Input(str, "微信公众号 AppSecret", required=True, example="your_app_secret_here"),
+        "capability": Input(str, "能力模块", required=True, enum=["menu", "draft", "publish", "material", "user", "comment", "message", "kf", "analysis"], example="draft"),
+        "action": Input(str, "执行动作", required=True, example="add")
+    },
+    outputs={
+        "result": Input(dict, "API 响应结果", example={"errcode": 0, "errmsg": "ok"})
+    }
+)
+def wechat_manage_capability(app_id: str, app_secret: str, capability: str, action: str, **kwargs) -> dict:
+    """
+    [OpenClaw Skill] 微信公众号能力管理统一接口。
+    支持：自定义菜单(menu)、草稿箱(draft)、发布能力(publish)、素材管理(material)、用户管理(user)、留言管理(comment)、基础消息(message)、客服(kf)、数据统计(analysis)。
+    
+    Args:
+        app_id (str): 微信公众号 AppID
+        app_secret (str): 微信公众号 AppSecret
+        capability (str): 能力模块，可选值：'menu', 'draft', 'publish', 'material', 'user', 'comment', 'message', 'kf', 'analysis'
+        action (str): 执行的动作，例如 'create', 'get', 'delete', 'add', 'update', 'list', 'reply' 等
+        **kwargs: 其他动作所需的参数
+        
+    Returns:
+        dict: 微信 API 的响应结果
+    """
+    manager = WeChatCapabilityManager(app_id, app_secret)
+    
+    try:
+        if capability == 'menu':
+            if action == 'create': return manager.create_menu(kwargs.get('menu_data', {}))
+            elif action == 'get': return manager.get_menu()
+            elif action == 'delete': return manager.delete_menu()
+            
+        elif capability == 'draft':
+            if action == 'add': return manager.add_draft(kwargs.get('articles', []))
+            elif action == 'get': return manager.get_draft(kwargs.get('media_id'))
+            elif action == 'delete': return manager.delete_draft(kwargs.get('media_id'))
+            elif action == 'update': return manager.update_draft(kwargs.get('media_id'), kwargs.get('index', 0), kwargs.get('article', {}))
+            elif action == 'count': return manager.get_draft_count()
+            elif action == 'batchget': return manager.batch_get_draft(kwargs.get('offset', 0), kwargs.get('count', 20), kwargs.get('no_content', 0))
+            
+        elif capability == 'publish':
+            if action == 'submit': return manager.submit_publish(kwargs.get('media_id'))
+            elif action == 'get_status': return manager.get_publish_status(kwargs.get('publish_id'))
+            elif action == 'delete': return manager.delete_publish(kwargs.get('article_id'), kwargs.get('index', 0))
+            elif action == 'get_article': return manager.get_publish_article(kwargs.get('article_id'))
+            elif action == 'batchget': return manager.batch_get_publish(kwargs.get('offset', 0), kwargs.get('count', 20), kwargs.get('no_content', 0))
+            
+        elif capability == 'material':
+            if action == 'get': return manager.get_material(kwargs.get('media_id'))
+            elif action == 'delete': return manager.delete_material(kwargs.get('media_id'))
+            elif action == 'count': return manager.get_material_count()
+            elif action == 'batchget': return manager.batch_get_material(kwargs.get('type', 'image'), kwargs.get('offset', 0), kwargs.get('count', 20))
+            
+        elif capability == 'user':
+            if action == 'get_list': return manager.get_user_list(kwargs.get('next_openid', ''))
+            elif action == 'get_info': return manager.get_user_info(kwargs.get('openid'), kwargs.get('lang', 'zh_CN'))
+            elif action == 'update_remark': return manager.update_user_remark(kwargs.get('openid'), kwargs.get('remark'))
+            
+        elif capability == 'comment':
+            msg_data_id = kwargs.get('msg_data_id')
+            index = kwargs.get('index', 0)
+            user_comment_id = kwargs.get('user_comment_id')
+            
+            if action == 'open': return manager.open_comment(msg_data_id, index)
+            elif action == 'close': return manager.close_comment(msg_data_id, index)
+            elif action == 'list': return manager.get_comment_list(msg_data_id, index, kwargs.get('begin', 0), kwargs.get('count', 50), kwargs.get('type', 0))
+            elif action == 'markelect': return manager.mark_elect_comment(msg_data_id, index, user_comment_id)
+            elif action == 'unmarkelect': return manager.unmark_elect_comment(msg_data_id, index, user_comment_id)
+            elif action == 'delete': return manager.delete_comment(msg_data_id, index, user_comment_id)
+            elif action == 'reply': return manager.reply_comment(msg_data_id, index, user_comment_id, kwargs.get('content'))
+            elif action == 'delete_reply': return manager.delete_reply(msg_data_id, index, user_comment_id)
+            
+        elif capability == 'message':
+            if action == 'send_custom': return manager.send_custom_message(kwargs.get('touser'), kwargs.get('msgtype'), **kwargs.get('msg_data', {}))
+            elif action == 'send_mass': return manager.send_mass_message(kwargs.get('filter_is_to_all', True), kwargs.get('filter_tag_id', 0), kwargs.get('msgtype'), **kwargs.get('msg_data', {}))
+            
+        elif capability == 'kf':
+            if action == 'add': return manager.add_kf_account(kwargs.get('kf_account'), kwargs.get('nickname'), kwargs.get('password'))
+            elif action == 'get_list': return manager.get_kf_list()
+            
+        elif capability == 'analysis':
+            if action == 'get_article_summary': return manager.get_article_summary(kwargs.get('begin_date'), kwargs.get('end_date'))
+            elif action == 'get_user_summary': return manager.get_user_summary(kwargs.get('begin_date'), kwargs.get('end_date'))
+            
+        return {"errcode": -1, "errmsg": f"不支持的能力或动作: {capability} -> {action}"}
+        
+    except Exception as e:
+        return {"errcode": -1, "errmsg": str(e)}

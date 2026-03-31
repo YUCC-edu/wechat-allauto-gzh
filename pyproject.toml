@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wechat-allauto-gzh"
+version = "2.0.0"
+description = "微信公众号智能排版与发布技能集，支持 Markdown 到微信 HTML 转换、多主题美化、草稿箱管理等功能"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "OpenClaw Team", email = "team@openclaw.ai"}
+]
+keywords = ["wechat", "weixin", "markdown", "html", "formatter", "publisher", "openclaw", "skill"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: TypeScript",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.28.0",
+    "pyyaml>=6.0",
+    "markdown>=3.4.0",
+    "beautifulsoup4>=4.11.0",
+    "lxml>=4.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "flake8>=5.0.0",
+    "mypy>=0.990",
+]
+
+[project.urls]
+Homepage = "https://github.com/openclaw-team/wechat-allauto-gzh"
+Documentation = "https://github.com/openclaw-team/wechat-allauto-gzh/blob/main/skill.md"
+Repository = "https://github.com/openclaw-team/wechat-allauto-gzh"
+Issues = "https://github.com/openclaw-team/wechat-allauto-gzh/issues"
+
+# ==========================================
+# OpenClaw Skill 配置
+# ==========================================
+[tool.openclaw]
+schema_version = "1.0"
+skill_id = "wechat-allauto-gzh"
+display_name = "微信公众号智能排版"
+description = "将 Markdown 转换为精美微信公众号文章，支持多种主题、自动排版、草稿箱管理"
+icon = "📝"
+category = "content"
+tags = ["wechat", "markdown", "html", "formatter", "publish"]
+
+[tool.openclaw.entry_points]
+formatter = "wechat_formatter_skill:convert_markdown_to_wechat_html"
+capability = "wechat_capability_skill:wechat_manage_capability"
+
+[tool.openclaw.permissions]
+network = true
+file_system = true
+environment = ["WECHAT_APP_ID", "WECHAT_APP_SECRET"]
+
+[tool.openclaw.dependencies]
+python = ">=3.8"
+packages = ["requests", "pyyaml", "markdown", "beautifulsoup4"]
+
+[tool.openclaw.documentation]
+readme = "skill.md"
+examples = "examples/"
+api_docs = "docs/api.md"
+
+[tool.openclaw.testing]
+test_command = "pytest tests/"
+test_coverage = 80
+
+[tool.openclaw.quality]
+lint_command = "flake8 src/"
+format_command = "black src/"
+type_check = "mypy src/"
