@@ -15,6 +15,16 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from openclaw_compat import skill_info, SkillException, Input
 
+# 导入 Markdown 转换模块
+try:
+    from .markdown_to_wechat_converter import convert_markdown_to_wechat_html, is_markdown
+except ImportError:
+    try:
+        from markdown_to_wechat_converter import convert_markdown_to_wechat_html, is_markdown
+    except ImportError:
+        convert_markdown_to_wechat_html = None
+        is_markdown = None
+
 # ==========================================
 # 自定义异常类（继承自 OpenClaw 基类）
 # ==========================================
@@ -608,6 +618,162 @@ class WeChatCapabilityManager:
         return self._request('POST', '/datacube/getusersummary', data=data)
 
 # ==========================================
+# 草稿箱 Markdown 自动转换辅助函数
+# ==========================================
+
+def _process_draft_articles(articles: List[dict], theme_name: str = "default", themes_dir: str = "./themes") -> List[dict]:
+    """
+    处理草稿文章列表，自动将 Markdown 内容转换为 HTML
+    
+    Args:
+        articles: 文章列表，每篇文章包含 title, content 等字段
+        theme_name: 主题名称，用于 Markdown 转换
+        themes_dir: 主题文件目录
+        
+    Returns:
+        处理后的文章列表，content 字段已转换为 HTML（如果原为 Markdown）
+    """
+    if not articles or not convert_markdown_to_wechat_html or not is_markdown:
+        return articles
+    
+    processed_articles = []
+    
+    for article in articles:
+        processed_article = article.copy()
+        
+        # 检查 content 字段是否存在且为 Markdown 格式
+        if "content" in processed_article and isinstance(processed_article["content"], str):
+            content = processed_article["content"].strip()
+            
+            # 如果内容是 Markdown 且不是 HTML 标签，则进行转换
+            if is_markdown(content) and not content.startswith("<"):
+                try:
+                    # 获取文章指定的主题（优先使用文章内的 theme 字段）
+                    article_theme = processed_article.get("theme", theme_name)
+                    
+                    # 转换为 HTML
+                    html_content = convert_markdown_to_wechat_html(
+                        markdown_content=content,
+                        theme_name=article_theme,
+                        themes_dir=themes_dir
+                    )
+                    
+                    processed_article["content"] = html_content
+                    processed_article["_converted_from_markdown"] = True
+                    processed_article["_theme_used"] = article_theme
+                    
+                except Exception as e:
+                    # 转换失败时保留原始内容
+                    processed_article["_conversion_error"] = str(e)
+        
+        processed_articles.append(processed_article)
+    
+    return processed_articles
+
+
+# ==========================================
+# 独立的 Markdown 转 HTML 技能函数
+# ==========================================
+
+@skill_info(
+    name="format_markdown_to_wechat_html",
+    description="将 Markdown 文本转换为微信公众号兼容的带内联样式 HTML，支持多主题定制",
+    version="1.0.0",
+    author="WeChat Skill Team",
+    tags=["wechat", "markdown", "html", "排版", "转换"],
+    inputs={
+        "markdown_content": Input(str, "要转换的 Markdown 文本", required=True, example="# 标题\\n\\n这是一段**加粗**文字。"),
+        "theme_name": Input(str, "主题名称", required=False, default="macaron/blue", example="macaron/blue"),
+        "themes_dir": Input(str, "主题文件目录", required=False, default="./themes", example="./themes")
+    },
+    outputs={
+        "html": Input(str, "转换后的 HTML", example="<h1 style=\"...\">标题</h1>")
+    }
+)
+def format_markdown_to_wechat_html(markdown_content: str, theme_name: str = "macaron/blue", themes_dir: str = "./themes") -> dict:
+    """
+    [OpenClaw Skill] 将 Markdown 转换为微信兼容 HTML。
+    
+    支持的 Markdown 元素：
+    - 标题（# 到 ######）
+    - 粗体 **text** 和斜体 *text*
+    - 行内代码 `code` 和代码块 ```
+    - 链接 [text](url)
+    - 图片 ![alt](src)
+    - 无序列表 - item 和有序列表 1. item
+    - 引用块 > quote
+    - 表格 | col1 | col2 |
+    - 分割线 ---
+    - 自定义容器 :::release 和 :::grid
+    
+    Args:
+        markdown_content (str): 要转换的 Markdown 文本
+        theme_name (str): 主题名称，如 "macaron/blue"、"wenyan/default"、"shuimo/default" 等
+        themes_dir (str): 主题文件所在目录
+        
+    Returns:
+        dict: 包含转换结果的字典
+            - success (bool): 是否转换成功
+            - html (str): 转换后的 HTML 字符串
+            - theme_used (str): 使用的主题名称
+            - is_markdown (bool): 原文是否被识别为 Markdown
+            - error (str): 如果失败，错误信息
+        
+    Example:
+        >>> result = format_markdown_to_wechat_html("# Hello\\n\\n**World**", "macaron/blue")
+        >>> print(result["html"])
+        <h1 style="...">Hello</h1><p style="..."><strong style="...">World</strong></p>
+    """
+    # 检查模块是否可用
+    if not convert_markdown_to_wechat_html:
+        return {
+            "success": False,
+            "error": "Markdown 转换模块未安装，请确保 markdown_to_wechat_converter.py 可用",
+            "html": markdown_content,
+            "theme_used": None,
+            "is_markdown": False
+        }
+    
+    try:
+        # 检测是否为 Markdown
+        is_md = is_markdown(markdown_content) if is_markdown else False
+        
+        # 如果不是 Markdown，直接返回原文
+        if not is_md:
+            return {
+                "success": True,
+                "html": markdown_content,
+                "theme_used": None,
+                "is_markdown": False,
+                "message": "内容不是 Markdown 格式，保持原样"
+            }
+        
+        # 执行转换
+        html = convert_markdown_to_wechat_html(
+            markdown_content=markdown_content,
+            theme_name=theme_name,
+            themes_dir=themes_dir
+        )
+        
+        return {
+            "success": True,
+            "html": html,
+            "theme_used": theme_name,
+            "is_markdown": True,
+            "message": "Markdown 转换成功"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"转换失败: {str(e)}",
+            "html": markdown_content,
+            "theme_used": None,
+            "is_markdown": is_md if is_markdown else False
+        }
+
+
+# ==========================================
 # OpenClaw Skill 接口定义
 # ==========================================
 
@@ -651,7 +817,13 @@ def wechat_manage_capability(app_id: str, app_secret: str, capability: str, acti
             elif action == 'delete': return manager.delete_menu()
             
         elif capability == 'draft':
-            if action == 'add': return manager.add_draft(kwargs.get('articles', []))
+            if action == 'add':
+                # 自动处理 Markdown 内容转换
+                articles = kwargs.get('articles', [])
+                theme_name = kwargs.get('theme', 'default')
+                themes_dir = kwargs.get('themes_dir', './themes')
+                processed_articles = _process_draft_articles(articles, theme_name, themes_dir)
+                return manager.add_draft(processed_articles)
             elif action == 'get': return manager.get_draft(kwargs.get('media_id'))
             elif action == 'delete': return manager.delete_draft(kwargs.get('media_id'))
             elif action == 'update': return manager.update_draft(kwargs.get('media_id'), kwargs.get('index', 0), kwargs.get('article', {}))
