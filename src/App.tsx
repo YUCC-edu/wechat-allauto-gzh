@@ -6,103 +6,172 @@ import { Smartphone, Code, Eye, Palette, RefreshCw } from 'lucide-react';
 const TEMPLATES = {
   default: {
     name: '功能介绍',
-    content: `# 微信公众号排版预览
+    content: `# 微信公众号排版预览工具
 
-欢迎使用微信公众号排版预览工具！这里展示了各种精美的主题排版效果。
+欢迎使用！这是一个功能完备的 Markdown 到微信 HTML 转换工具，支持多主题切换和实时预览。
 
-## 核心功能
+## 核心特性
 
-* **多主题支持**：内置文颜主题和马卡龙色系主题
-* **实时预览**：左侧输入 Markdown，右侧实时查看排版效果
-* **微信规范**：严格按照微信公众号的 HTML 规范生成
+* **实时预览**：左右分栏编辑，毫秒级响应
+* **20+ 精美主题**：涵盖马卡龙、文颜、水墨等多种风格
+* **高级组件**：支持 release、grid、timeline 等排版组件
+* **微信规范**：生成纯内联样式 HTML，完美兼容公众号平台
 
-### 代码块展示
+### 苹果风格代码块
 
-\`\`\`python
-def hello_world():
-    print("Hello, WeChat!")
-    return True
+\`\`\`javascript
+const converter = new WeChatHTMLConverter(themeConfig);
+const html = converter.convert(markdownText);
+
+console.log('转换结果:', html.length, '字符');
 \`\`\`
 
 ### 引用与强调
 
-> 排版是一门艺术，好的排版能让阅读成为一种享受。
+> 好的排版让阅读成为一种享受。
+> 好的设计是尽可能少的设计。
 
-在这里，你可以使用 **粗体**，也可以使用 *斜体*，或者添加一个 [链接](https://mp.weixin.qq.com)。
+在这里，你可以使用 **粗体** 强调重点，也可以用 *斜体* 表达情感，或者添加 [链接](https://mp.weixin.qq.com) 指向参考资料。
 
-### 列表展示
+### 操作步骤
 
-1. 第一步：选择一个喜欢的主题
-2. 第二步：输入你的 Markdown 内容
-3. 第三步：复制生成的 HTML 到微信公众号后台
+1. 选择一个喜欢的主题风格
+2. 在左侧输入 Markdown 内容
+3. 右侧实时预览排版效果
+4. 点击「HTML」查看生成的代码
+5. 复制代码到公众号后台使用
 
-### 表格展示
+### 主题色配置
 
-| 参数 | 数值 | 说明 |
+| 主题类型 | 数量 | 风格描述 |
 | --- | --- | --- |
-| 主题数量 | 20+ | 包含多种风格 |
-| 响应速度 | 毫秒级 | 实时渲染无延迟 |
+| 马卡龙 | 12 | 清新明亮，低饱和度 |
+| 文颜 | 8 | 古风雅致，传统色彩 |
+| 水墨 | 1 | 中国传统水墨风格 |
+| 极客 | 1 | 终端命令行风格 |
 
 ---
 
-![示例图片](https://picsum.photos/seed/wechat/800/400)
+![主题预览](https://picsum.photos/seed/wechat/800/400)
 
-感谢使用！`
+开始创作你的第一篇文章吧！
+`
   },
   tech: {
     name: '技术教程',
-    content: `# Python 异步编程指南
+    content: `# Swift 并发编程指南
 
-在现代 Web 开发中，异步编程已经成为提升性能的关键技术。
+Swift 5.5 引入了全新的并发模型，让异步代码的编写变得前所未有的简洁和安全。
 
-## 1. 什么是异步编程？
+## 1. async/await 基础
 
-异步编程允许程序在等待 I/O 操作（如网络请求、文件读写）完成时，继续执行其他任务，而不是阻塞等待。
+传统的回调地狱已经成为过去。Swift 的 async/await 语法让异步代码看起来像同步代码一样直观。
 
-### 核心概念
+### 基本用法
 
-* **Event Loop (事件循环)**：负责调度和执行异步任务。
-* **Coroutine (协程)**：使用 \`async def\` 定义的函数。
-* **Future/Task**：代表一个异步操作的最终结果。
+\`\`\`swift
+func fetchUser(id: Int) async throws -> User {
+    let url = URL(string: "https://api.example.com/users/\\(id)")!
+    let (data, _) = try await URLSession.shared.data(from: url)
+    return try JSONDecoder().decode(User.self, from: data)
+}
 
-## 2. 基础示例
-
-下面是一个简单的 \`asyncio\` 示例：
-
-\`\`\`python
-import asyncio
-
-async def fetch_data():
-    print("开始获取数据...")
-    await asyncio.sleep(2)  # 模拟网络请求
-    print("数据获取完成！")
-    return {"status": 200}
-
-async def main():
-    await fetch_data()
-
-asyncio.run(main())
+Task {
+    do {
+        let user = try await fetchUser(id: 42)
+        print("用户名称: \\(user.name)")
+    } catch {
+        print("获取失败: \\(error)")
+    }
+}
 \`\`\`
 
-## 3. 性能对比
+### 并行执行
 
-| 模式 | 耗时 | 资源占用 |
-| --- | --- | --- |
-| 同步阻塞 | 10.5s | 低 |
-| 多线程 | 3.2s | 高 |
-| 异步 I/O | 3.1s | 极低 |
+当多个任务相互独立时，可以并行启动它们，显著提升执行效率：
 
-> 提示：在 I/O 密集型任务中，异步编程的优势最为明显。
+\`\`\`swift
+func fetchAllUsers() async throws -> [User] {
+    async let user1 = fetchUser(id: 1)
+    async let user2 = fetchUser(id: 2)
+    async let user3 = fetchUser(id: 3)
+    
+    return try await [user1, user2, user3]
+}
+\`\`\`
+
+## 2. Actor 模型 - 线程安全
+
+Actor 是 Swift 提供的全新并发类型，自动保证状态访问的线程安全。
+
+\`\`\`swift
+actor BankAccount {
+    private var balance: Double = 0
+    
+    func deposit(_ amount: Double) {
+        balance += amount
+    }
+    
+    func withdraw(_ amount: Double) throws {
+        guard balance >= amount else {
+            throw BankError.insufficientFunds
+        }
+        balance -= amount
+    }
+    
+    var currentBalance: Double {
+        balance
+    }
+}
+
+let account = BankAccount()
+await account.deposit(1000)
+let balance = await account.currentBalance
+\`\`\`
+
+## 3. Task 取消与优先级
+
+\`\`\`swift
+func downloadFile(from url: URL) async throws -> Data {
+    let task = Task {
+        var data = Data()
+        for await chunk in url.session.bytes(from: url) {
+            try Task.checkCancellation()
+            data.append(contentsOf: chunk)
+        }
+        return data
+    }
+    
+    // 5秒后取消
+    try await Task.sleep(nanoseconds: 5_000_000_000)
+    task.cancel()
+    
+    return try await task.value
+}
+\`\`\`
+
+## 性能对比
+
+| 方式 | 代码复杂度 | 性能 | 线程安全 |
+| --- | --- | --- | --- |
+| 回调 | 高 | 好 | 否 |
+| Promise | 中 | 好 | 否 |
+| async/await | 低 | 优 | 否 |
+| Actor | 低 | 优 | 是 |
+
+> **提示**：善用 TaskGroup 可以动态管理大量并发任务，是处理批量操作的利器。
 
 ## 总结
 
-掌握异步编程，能让你的 Python 应用性能产生质的飞跃。`
+Swift 的现代并发模型完美融合了性能与安全性。掌握 async/await 和 Actor，你就能编写出既优雅又高效的异步代码。
+`
   },
   essay: {
     name: '生活随笔',
     content: `# 周末的咖啡馆时光
 
-阳光透过落地窗洒在木质桌面上，这是一个难得清闲的周末下午。
+阳光透过落地窗洒在木质桌面上，
+这是一个难得清闲的周末下午。
 
 ## 城市的避风港
 
@@ -110,10 +179,11 @@ asyncio.run(main())
 
 > 生活不是为了赶路，而是为了感受路上的风景。
 
-### 今天的点单
+### 今日点单
 
-* **手冲耶加雪菲**：带有淡淡的柑橘酸甜，口感干净明亮。
-* **海盐海绵蛋糕**：微咸的奶油中和了蛋糕的甜腻，恰到好处。
+* **手冲耶加雪菲** - 带有淡淡的柑橘酸甜，口感干净明亮
+* **海盐海绵蛋糕** - 微咸的奶油中和了蛋糕的甜腻，恰到好处
+* **冰美式** - 简单纯粹，苦中带香
 
 ## 慢下来的意义
 
@@ -123,117 +193,233 @@ asyncio.run(main())
 2. 在笔记本上随意写下几句感悟
 3. 仅仅是看着窗外匆匆走过的人群发呆
 
-![咖啡时光](https://picsum.photos/seed/coffee/800/500)
+::: focus
+偶尔慢下来，才能走得更远。
+:::
 
-或许，我们需要经常给自己按下“暂停键”，才能更好地继续前行。`
+## 窗外的风景
+
+阳光的角度在慢慢变化，从正午的炽热变成了午后的温柔。咖啡馆里的人来来往往，每个人都有自己的故事。
+
+| 时间 | 场景 | 心情 |
+| --- | --- | --- |
+| 12:00 | 刚进门 | 疲惫 |
+| 13:00 | 喝第一口咖啡 | 放松 |
+| 15:00 | 看完半本书 | 平静 |
+| 17:00 | 离开 | 充实 |
+
+::: timeline
+10:00 抵达咖啡馆
+选了一个靠窗的位置
+---
+12:00 午餐时间
+点了一份简餐和手冲
+---
+15:00 阅读时光
+沉浸在书中的世界
+---
+17:00 离开
+带着满足感回家
+:::
+
+或许，我们需要经常给自己按下「暂停键」，才能更好地继续前行。
+`
   },
   product: {
     name: '高级排版示例',
-    content: `# 微信公众号排版组件测试
+    content: `# 高级排版组件完全指南
 
-本文展示所有高级排版组件效果。
+本文档展示所有高级排版组件的用法，包括 release、grid、timeline、steps、compare、focus 等组件。
 
 ---
 
-## 1. release 组件
+## release 组件 - 精选文章卡片
 
 ### 默认样式
 ::: release
-# 精选文章
-这里展示默认参数的 release 样式。
+# 写作是最好的自我投资
+写作不仅仅是文字的排列组合，更是思维的梳理和情感的表达。每一位写作者都在用自己的方式影响世界。
 :::
 
 ### 自定义参数
-::: release 周刊精选 推荐 趣阅 原创 深度
-# 全自定义 release
-可以自定义顶部标题、副标题、底部标签等所有文本。
+::: release 周刊 精选 原创 深度 思考
+# 如何提升思考深度
+在这个信息爆炸的时代，我们每天被各种碎片化的信息包围。真正的深度思考能力，成为了一种稀缺而珍贵的能力。
 :::
 
 ---
 
-## 2. grid 组件
+## grid 组件 - 多列网格布局
 
-### 默认前缀
+### 默认 PART 前缀
 ::: grid
 晨光
-第一缕阳光
+清晨的第一缕阳光，温柔地唤醒沉睡的城市
 ---
 午后
-慵懒时光
+慵懒的午后时光，一杯咖啡一段文字
 ---
-星空
-夜话故事
+黄昏
+落日余晖洒满窗台，思绪随风飘远
 :::
 
 ### 自定义前缀
 ::: grid 章节
 第一章
-内容简介
+觉醒 - 当你开始意识到时间的珍贵
 ---
 第二章
-内容简介
+行动 - 从此刻开始，不再等待
+---
+第三章
+坚持 - 重复的力量，时间的复利
 :::
 
 ---
 
-## 3. timeline 组件
+## timeline 组件 - 时间线布局
 
+### 项目里程碑
 ::: timeline
 2024-01 需求分析
-完成调研
+完成市场调研和用户访谈
 ---
 2024-02 产品设计
-完成原型
+交互原型评审，视觉稿定稿
 ---
-2024-03 开发
-持续交付
+2024-03 技术开发
+核心功能开发，敏捷迭代
+---
+2024-04 测试上线
+全量发布，用户反馈收集
 :::
 
 ---
 
-## 4. steps 组件
+## steps 组件 - 步骤指示器
 
+### 三步学习法
 ::: steps
-调研需求 确定方向
+第一步 广泛涉猎
+快速阅读大量相关资料，建立整体认知框架
 ---
-制定方案 规划路径
+第二步 深度研究
+针对核心主题进行深入阅读和思考
 ---
-开发实施 完成上线
+第三步 实践输出
+将所学知识用于实践，形成自己的见解
 :::
 
 ---
 
-## 5. compare 组件
+## compare 组件 - 对比布局
 
-::: compare 优点 缺点
-**推荐**
-- 性能优秀
-- 体验流畅
+### 方案 A vs 方案 B
+::: compare
+**方案 A：渐进式改变**
+- 低风险，易于执行
+- 短期效果不明显
+- 适合组织变革
+- 需要长期坚持
 ---
-**不推荐**
-- 学习成本
-- 配置复杂
+**方案 B：激进式重构**
+- 高风险，可能颠覆
+- 短期效果显著
+- 适合初创公司
+- 需要强执行力
 :::
 
 ---
 
-## 6. focus 组件
+## focus 组件 - 金句卡片
+
+### 核心观点强调
+::: focus
+种一棵树最好的时间是十年前，其次是现在。
+:::
 
 ::: focus
-这是一句非常重要的**金句**，用来强调核心观点。
+**成功的秘诀**在于持续做那些微小的、看似无关紧要的事情。
 :::
 
 ---
 
-## 7. 代码块
+## 苹果风格代码块
 
-验证代码块不会被组件处理：
+\`\`\`swift
+import UIKit
+
+class ViewController: UIViewController {
+    private let titleLabel: UILabel = {
+        let label = UILabel()
+        label.text = "Hello, World!"
+        label.textColor = .label
+        label.textAlignment = .center
+        label.font = .systemFont(ofSize: 24, weight: .bold)
+        return label
+    }()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.addSubview(titleLabel)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+}
+\`\`\`
 
 \`\`\`python
-def hello():
-    print("Hello!")
-    # 井号不会被处理
-\`\`\``
+import asyncio
+from typing import List, Optional
+
+class AsyncFetcher:
+    def __init__(self, timeout: int = 30):
+        self.timeout = timeout
+        self._cache: dict = {}
+    
+    async def fetch(self, url: str) -> Optional[dict]:
+        if url in self._cache:
+            return self._cache[url]
+        
+        async with asyncio.timeout(self.timeout):
+            response = await self._request(url)
+            self._cache[url] = response
+            return response
+    
+    async def _request(self, url: str) -> dict:
+        # 实现请求逻辑
+        pass
+\`\`\`
+
+---
+
+## 标准 Markdown 元素
+
+### 引用块
+> 好的设计是尽可能少的设计。
+> — 迪特·拉姆斯
+
+### 表格
+| 组件 | 用途 | 难度 |
+| --- | --- | --- |
+| release | 精选卡片 | ⭐⭐ |
+| grid | 多列布局 | ⭐ |
+| timeline | 时间线 | ⭐⭐ |
+| steps | 步骤指示 | ⭐⭐ |
+| compare | 对比展示 | ⭐⭐ |
+| focus | 金句强调 | ⭐ |
+
+### 有序列表
+1. 第一步：选择合适的组件
+2. 第二步：填充内容
+3. 第三步：调整参数
+4. 第四步：预览效果
+
+感谢阅读！
+`
   }
 };
 
